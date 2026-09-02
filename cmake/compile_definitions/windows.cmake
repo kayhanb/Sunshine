@@ -109,4 +109,11 @@ list(PREPEND PLATFORM_LIBRARIES
 if(SUNSHINE_ENABLE_TRAY)
     list(APPEND PLATFORM_TARGET_FILES
             "${CMAKE_SOURCE_DIR}/third-party/tray/src/tray_windows.c")
+else()
+    # Mirror the Linux path: constants.cmake defaults SUNSHINE_TRAY to 1 and
+    # common.cmake turns it into the SUNSHINE_TRAY compile definition, so it
+    # must be cleared here or system_tray.cpp still compiles its body and
+    # references tray_init/tray_loop/tray_exit that are no longer built.
+    set(SUNSHINE_TRAY 0)
+    message(STATUS "Tray icon disabled")
 endif()
