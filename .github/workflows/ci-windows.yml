@@ -229,7 +229,7 @@ jobs:
             -DSUNSHINE_ENABLE_TRAY=OFF \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DSUNSHINE_ASSETS_DIR=assets \
-            -DSUNSHINE_PUBLISHER_NAME="${GITHUB_REPOSITORY_OWNER}" \
+            -DSUNSHINE_PUBLISHER_NAME="LeCafe" \
             -DSUNSHINE_PUBLISHER_WEBSITE="https://app.lizardbyte.dev" \
             -DSUNSHINE_PUBLISHER_ISSUE_URL="https://app.lizardbyte.dev/support"
           echo "::add-matcher::.github/matchers/gcc.json"
