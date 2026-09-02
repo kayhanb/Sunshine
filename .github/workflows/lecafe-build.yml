@@ -1,0 +1,21 @@
+---
+# LeCafe tray'siz Sunshine build'i (bkz. LeCafe backlog adım 36, ADR 0020).
+# Upstream ci-windows.yml'i SUNSHINE_ENABLE_TRAY=OFF ile derler; yalnız
+# AMD64 portable Windows binary üretilir, imzalama/yayınlama kapalı.
+name: LeCafe Sunshine Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci-windows.yml
+    with:
+      publish_release: "false"
+      release_commit: "14ffa6fdaa53f7b51512be2b3d24f3939695403c"
+      release_version: "2026.516.143833"
