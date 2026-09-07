@@ -373,7 +373,11 @@ jobs:
         with:
           name: sunshine-screenshots-${{ matrix.name }}
           path: build/tests/screenshots
-          if-no-files-found: error
+          # Tray KAPALI derlendiği için ekran görüntüsü üretilmiyor; upstream'in
+          # `error` değeri bu adımı düşürüp bütün run'ı failure yapıyordu ve
+          # LeCafe bundler'ı yalnız başarılı run'ları aldığı için build görünmez
+          # oluyordu. Adımların kendisi upstream'deki gibi duruyor.
+          if-no-files-found: ignore
 
       - name: Generate gcov report
         id: test_report
