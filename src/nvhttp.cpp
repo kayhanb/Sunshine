@@ -444,12 +444,30 @@ namespace nvhttp {
       return {};
     }
 
+    std::lock_guard lock {client_auth_mutex()};
+
+    // LeCafe: a client that pairs again with the certificate it already used
+    // must not become a second record. is_client_enabled() rejects a
+    // certificate that matches more than one record, so every re-pair would
+    // lock the client out and make it pair yet again (15 duplicate entries
+    // were found on the cafe VM, 2026-09-08). Refresh the existing record.
+    for (auto &existing : client_root.named_devices) {
+      if (existing.cert == canonical_certificate) {
+        existing.name = name;
+        existing.enabled = true;
+        rebuild_client_cert_chain();
+        if (!config::sunshine.flags[config::flag::FRESH_STATE]) {
+          save_state();
+        }
+        return existing.uuid;
+      }
+    }
+
     named_cert_t named_cert;
     named_cert.name = name;
     named_cert.cert = std::move(canonical_certificate);
     named_cert.uuid = uuid_util::uuid_t::generate().string();
 
-    std::lock_guard lock {client_auth_mutex()};
     client_root.named_devices.emplace_back(std::move(named_cert));
     rebuild_client_cert_chain();
 
