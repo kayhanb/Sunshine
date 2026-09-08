@@ -320,9 +320,13 @@ namespace platf::lecafe_hid {
     const auto ax = static_cast<std::uint16_t>(std::clamp(std::lround(x * absolute_max / width), 0L, static_cast<long>(absolute_max)));
     const auto ay = static_cast<std::uint16_t>(std::clamp(std::lround(y * absolute_max / height), 0L, static_cast<long>(absolute_max)));
     std::lock_guard lock(mutex_);
+    // Buttons belong to the relative collection only. Repeating them here made
+    // Windows see a second "button down" from another device on every move
+    // while dragging, so drag-select on the desktop kept restarting (user
+    // report 2026-09-08).
     const std::uint8_t report[7] {
       report_absolute,
-      buttons_,
+      0,
       static_cast<std::uint8_t>(ax & 0xFF),
       static_cast<std::uint8_t>(ax >> 8),
       static_cast<std::uint8_t>(ay & 0xFF),
