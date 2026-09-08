@@ -22,6 +22,9 @@
 #include "src/config.h"
 #include "src/logging.h"
 #include "virtualhid_input.h"
+#ifdef _WIN32
+  #include "src/platform/windows/lecafe_hid.h"
+#endif
 
 using namespace std::literals;
 
