@@ -18,8 +18,8 @@
 #include "src/logging.h"
 #include "src/platform/windows/lecafe_hid.h"
 
-// lib includes
-#include <Limelight.h>
+using namespace std::literals;
+
 
 namespace platf::lecafe_hid {
 
