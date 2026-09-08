@@ -31,6 +31,7 @@
 #include "src/logging.h"
 #include "src/platform/common.h"
 #include "src/platform/virtualhid_input.h"
+#include "src/platform/windows/lecafe_hid.h"
 
 namespace platf {
   using namespace std::literals;
@@ -522,10 +523,16 @@ namespace platf {
   struct input_raw_t {
     virtualhid::input_context_t virtualhid;  ///< libvirtualhid input context.
     std::unique_ptr<vigem_t> vigem;  ///< ViGEm fallback context.
+    std::unique_ptr<lecafe_hid::device_t> lecafe;  ///< LeCafe virtual HID driver (keyboard + mouse), if installed.
   };
+
+  lecafe_hid::device_t *lecafe_hid::get(input_t &input) {
+    return input->lecafe.get();
+  }
 
   input_t input() {
     input_t result {new input_raw_t {}};
+    result->lecafe = lecafe_hid::device_t::open();
 
     if (auto &raw = *result; !raw.virtualhid.runtime || !raw.virtualhid.runtime->capabilities().supports_gamepad) {
       auto vigem = std::make_unique<vigem_t>();

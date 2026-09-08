@@ -1009,26 +1009,63 @@ namespace platf {
 #endif
 
   void move_mouse(input_t &input, int deltaX, int deltaY) {
+#ifdef _WIN32
+    if (auto *device = lecafe_hid::get(input)) {
+      device->move(deltaX, deltaY);
+      return;
+    }
+#endif
     virtualhid::move_mouse(virtualhid::get_input_context(input), deltaX, deltaY);
   }
 
   void abs_mouse(input_t &input, const touch_port_t &touch_port, float x, float y) {
+#ifdef _WIN32
+    if (auto *device = lecafe_hid::get(input)) {
+      device->move_absolute(x, y, touch_port.width, touch_port.height);
+      return;
+    }
+#endif
     virtualhid::abs_mouse(virtualhid::get_input_context(input), touch_port, x, y);
   }
 
   void button_mouse(input_t &input, int button, bool release) {
+#ifdef _WIN32
+    if (auto *device = lecafe_hid::get(input)) {
+      device->button(button, !release);
+      return;
+    }
+#endif
     virtualhid::button_mouse(virtualhid::get_input_context(input), button, release);
   }
 
   void scroll(input_t &input, int high_res_distance) {
+#ifdef _WIN32
+    if (auto *device = lecafe_hid::get(input)) {
+      device->scroll(high_res_distance);
+      return;
+    }
+#endif
     virtualhid::scroll(virtualhid::get_input_context(input), high_res_distance);
   }
 
   void hscroll(input_t &input, int high_res_distance) {
+#ifdef _WIN32
+    if (auto *device = lecafe_hid::get(input)) {
+      device->hscroll(high_res_distance);
+      return;
+    }
+#endif
     virtualhid::hscroll(virtualhid::get_input_context(input), high_res_distance);
   }
 
   void keyboard_update(input_t &input, uint16_t modcode, bool release, uint8_t flags) {
+#ifdef _WIN32
+    if (auto *device = lecafe_hid::get(input)) {
+      (void) flags;
+      device->key(modcode, !release);
+      return;
+    }
+#endif
     virtualhid::keyboard_update(virtualhid::get_input_context(input), modcode, release, flags);
   }
 
