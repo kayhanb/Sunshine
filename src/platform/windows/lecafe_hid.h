@@ -34,13 +34,51 @@ namespace platf::lecafe_hid {
      */
     static std::unique_ptr<device_t> open();
 
+    /**
+     * @brief Press or release a key.
+     * @param vk Windows virtual key code (US layout as normalized by Moonlight).
+     * @param pressed True on key down, false on key up.
+     */
     void key(std::uint16_t vk, bool pressed);
+
+    /**
+     * @brief Relative mouse motion.
+     * @param dx Horizontal delta in pixels.
+     * @param dy Vertical delta in pixels.
+     */
     void move(int dx, int dy);
+
+    /**
+     * @brief Absolute mouse motion.
+     * @param x Horizontal position in the coordinate space of `width`.
+     * @param y Vertical position in the coordinate space of `height`.
+     * @param width Width of the coordinate space.
+     * @param height Height of the coordinate space.
+     */
     void move_absolute(float x, float y, int width, int height);
+
+    /**
+     * @brief Press or release a mouse button.
+     * @param button Moonlight button identifier (BUTTON_LEFT, ...).
+     * @param pressed True on button down, false on button up.
+     */
     void button(int button, bool pressed);
+
+    /**
+     * @brief Vertical scroll.
+     * @param high_res_distance Distance in 1/120 detent units.
+     */
     void scroll(int high_res_distance);
+
+    /**
+     * @brief Horizontal scroll.
+     * @param high_res_distance Distance in 1/120 detent units.
+     */
     void hscroll(int high_res_distance);
-    /** @brief Release every pressed key and button (client disconnect). */
+
+    /**
+     * @brief Release every pressed key and button (client disconnect).
+     */
     void release_all();
 
   private:
@@ -59,7 +97,9 @@ namespace platf::lecafe_hid {
   };
 
   /**
-   * @brief The device attached to a platform input context, or nullptr.
+   * @brief Get the device attached to a platform input context.
+   * @param input Platform input context.
+   * @return The device, or nullptr when the driver is not installed.
    */
   device_t *get(input_t &input);
 
