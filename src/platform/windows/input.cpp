@@ -32,6 +32,7 @@
 #include "src/platform/common.h"
 #include "src/platform/virtualhid_input.h"
 #include "src/platform/windows/lecafe_hid.h"
+#include "src/platform/windows/lecafe_pad.h"
 
 namespace platf {
   using namespace std::literals;
@@ -524,6 +525,7 @@ namespace platf {
     virtualhid::input_context_t virtualhid;  ///< libvirtualhid input context.
     std::unique_ptr<vigem_t> vigem;  ///< ViGEm fallback context.
     std::unique_ptr<lecafe_hid::device_t> lecafe;  ///< LeCafe virtual HID driver (keyboard + mouse), if installed.
+    std::unique_ptr<lecafe_pad::context_t> lecafe_pad;  ///< LeCafe virtual gamepads (XInput), if installed.
   };
 
   lecafe_hid::device_t *lecafe_hid::get(input_t &input) {
@@ -533,8 +535,10 @@ namespace platf {
   input_t input() {
     input_t result {new input_raw_t {}};
     result->lecafe = lecafe_hid::device_t::open();
+    result->lecafe_pad = lecafe_pad::open();
 
-    if (auto &raw = *result; !raw.virtualhid.runtime || !raw.virtualhid.runtime->capabilities().supports_gamepad) {
+    // LeCafe pads replace the ViGEm fallback; probing it would log a fatal "ViGEmBus not installed" line.
+    if (auto &raw = *result; !raw.lecafe_pad && (!raw.virtualhid.runtime || !raw.virtualhid.runtime->capabilities().supports_gamepad)) {
       auto vigem = std::make_unique<vigem_t>();
       if (!vigem->init()) {
         raw.vigem = std::move(vigem);
@@ -622,6 +626,15 @@ namespace platf {
   int alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata, feedback_queue_t feedback_queue) {
     auto raw = (input_raw_t *) input.get();
 
+    if (raw->lecafe_pad) {
+      if (raw->lecafe_pad->alloc(id, feedback_queue)) {
+        BOOST_LOG(info) << "Gamepad "sv << id.globalIndex << " will be LeCafe pad "sv << id.globalIndex;
+        return 0;
+      }
+      BOOST_LOG(warning) << "Gamepad "sv << id.globalIndex << " has no LeCafe pad ("sv << raw->lecafe_pad->count() << " installed)"sv;
+      return -1;
+    }
+
     if (virtualhid::alloc_gamepad(raw->virtualhid, id, metadata, feedback_queue) == 0) {
       return 0;
     }
@@ -685,6 +698,10 @@ namespace platf {
   int rebind_gamepad(input_t &input, const gamepad_id_t &id, feedback_queue_t feedback_queue) {
     auto raw = (input_raw_t *) input.get();
 
+    if (raw->lecafe_pad && raw->lecafe_pad->has(id.globalIndex)) {
+      return raw->lecafe_pad->rebind(id, std::move(feedback_queue)) ? 0 : -1;
+    }
+
     if (virtualhid::has_gamepad(raw->virtualhid, id.globalIndex)) {
       return virtualhid::rebind_gamepad(raw->virtualhid, id, std::move(feedback_queue));
     }
@@ -698,6 +715,11 @@ namespace platf {
 
   void free_gamepad(input_t &input, int nr) {
     auto raw = (input_raw_t *) input.get();
+
+    if (raw->lecafe_pad && raw->lecafe_pad->has(nr)) {
+      raw->lecafe_pad->release(nr);
+      return;
+    }
 
     if (virtualhid::has_gamepad(raw->virtualhid, nr)) {
       virtualhid::free_gamepad(raw->virtualhid, nr);
@@ -963,6 +985,11 @@ namespace platf {
    */
   void gamepad_update(input_t &input, int nr, const gamepad_state_t &gamepad_state) {
     auto raw = (input_raw_t *) input.get();
+    if (raw->lecafe_pad && raw->lecafe_pad->has(nr)) {
+      raw->lecafe_pad->update(nr, gamepad_state);
+      return;
+    }
+
     if (virtualhid::has_gamepad(raw->virtualhid, nr)) {
       virtualhid::gamepad_update(raw->virtualhid, nr, gamepad_state);
       return;
@@ -1230,7 +1257,7 @@ namespace platf {
     }
 
     const auto raw = (input_raw_t *) input->get();
-    gps = virtualhid::supported_gamepads(raw->virtualhid.runtime.get(), raw->vigem != nullptr);
+    gps = virtualhid::supported_gamepads(raw->virtualhid.runtime.get(), raw->vigem != nullptr || raw->lecafe_pad != nullptr);
     return gps;
   }
 
