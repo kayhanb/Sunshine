@@ -27,32 +27,43 @@ namespace platf::lecafe_pad {
 
     /**
      * @brief Number of pads whose channel is open.
+     * @return Open pad count.
      */
     virtual int count() const = 0;
 
     /**
      * @brief Claim pad `id.globalIndex` for a client gamepad.
+     * @param id Gamepad identifiers; the global index selects the pad.
+     * @param feedback_queue Queue used to return rumble to the client.
      * @return False when there is no such pad.
      */
     virtual bool alloc(const gamepad_id_t &id, feedback_queue_t feedback_queue) = 0;
 
     /**
      * @brief Route an allocated pad's rumble to a resumed client.
+     * @param id Gamepad identifiers of the resumed client.
+     * @param feedback_queue Queue used to return rumble to the client.
+     * @return False when the pad is not allocated.
      */
     virtual bool rebind(const gamepad_id_t &id, feedback_queue_t feedback_queue) = 0;
 
     /**
      * @brief Whether the pad is allocated.
+     * @param global_index Global gamepad index.
+     * @return True when the pad is allocated.
      */
     virtual bool has(int global_index) = 0;
 
     /**
      * @brief Write the client's gamepad state to the pad.
+     * @param global_index Global gamepad index.
+     * @param state Gamepad state sent by the client.
      */
     virtual void update(int global_index, const gamepad_state_t &state) = 0;
 
     /**
      * @brief Return the pad to neutral and release it.
+     * @param global_index Global gamepad index.
      */
     virtual void release(int global_index) = 0;
   };
