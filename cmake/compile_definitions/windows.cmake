@@ -67,6 +67,10 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/windows/misc.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/misc.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/input.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/vhid_bridge.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/vhid_bridge.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/vpad_bridge.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/vpad_bridge.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_base.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_vram.cpp"
@@ -93,6 +97,7 @@ list(PREPEND PLATFORM_LIBRARIES
         D3DCompiler
         dwmapi
         dxgi
+        hid
         iphlpapi
         ksuser
         libssp.a

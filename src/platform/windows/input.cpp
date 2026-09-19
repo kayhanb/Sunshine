@@ -32,6 +32,8 @@
 #include "src/logging.h"
 #include "src/platform/common.h"
 #include "src/platform/virtualhid_input.h"
+#include "src/platform/windows/vhid_bridge.h"
+#include "src/platform/windows/vpad_bridge.h"
 
 namespace platf {
   using namespace std::literals;
@@ -522,6 +524,8 @@ namespace platf {
   struct input_raw_t {
     virtualhid::input_context_t virtualhid;  ///< libvirtualhid input context.
     std::unique_ptr<vigem_t> vigem;  ///< ViGEm fallback context.
+    std::unique_ptr<vhid_bridge::device_t> vhid;  ///< virtual HID driver (keyboard + mouse), if installed.
+    std::unique_ptr<vpad_bridge::context_t> vpad;  ///< virtual gamepads (XInput), if installed.
   };
 
   /**
@@ -558,10 +562,17 @@ namespace platf {
     };
   }
 
+  vhid_bridge::device_t *vhid_bridge::get(input_t &input) {
+    return input->vhid.get();
+  }
+
   input_t input() {
     input_t result {new input_raw_t {}};
+    result->vhid = vhid_bridge::device_t::open();
+    result->vpad = vpad_bridge::open();
 
-    if (auto &raw = *result; config::input.controller && !should_use_virtualhid_gamepads(raw) && virtualhid::should_try_vigembus_fallback(config::input.gamepad, false, config::input.gamepad_driver)) {
+    // The virtual gamepad driver replaces the ViGEm fallback; probing it would log a fatal "ViGEmBus not installed" line.
+    if (auto &raw = *result; !raw.vpad && config::input.controller && !should_use_virtualhid_gamepads(raw) && virtualhid::should_try_vigembus_fallback(config::input.gamepad, false, config::input.gamepad_driver)) {
       if (config::input.gamepad_driver == config::GAMEPAD_DRIVER_VIGEMBUS) {
         BOOST_LOG(info) << "ViGEmBus is selected as the only virtual gamepad driver"sv;
       } else if (raw.virtualhid.runtime && raw.virtualhid.runtime->capabilities().supports_gamepad) {
@@ -667,6 +678,15 @@ namespace platf {
     auto raw = (input_raw_t *) input.get();
     const auto use_virtualhid = should_use_virtualhid_gamepads(*raw);
 
+    if (raw->vpad) {
+      if (raw->vpad->alloc(id, feedback_queue)) {
+        BOOST_LOG(info) << "Gamepad "sv << id.globalIndex << " will be virtual input pad "sv << id.globalIndex;
+        return 0;
+      }
+      BOOST_LOG(warning) << "Gamepad "sv << id.globalIndex << " has no virtual pad ("sv << raw->vpad->count() << " installed)"sv;
+      return -1;
+    }
+
     if (use_virtualhid && virtualhid::alloc_gamepad(raw->virtualhid, id, metadata, feedback_queue) == 0) {
       return 0;
     }
@@ -729,6 +749,10 @@ namespace platf {
   int rebind_gamepad(input_t &input, const gamepad_id_t &id, feedback_queue_t feedback_queue) {
     auto raw = (input_raw_t *) input.get();
 
+    if (raw->vpad && raw->vpad->has(id.globalIndex)) {
+      return raw->vpad->rebind(id, std::move(feedback_queue)) ? 0 : -1;
+    }
+
     if (virtualhid::has_gamepad(raw->virtualhid, id.globalIndex)) {
       return virtualhid::rebind_gamepad(raw->virtualhid, id, std::move(feedback_queue));
     }
@@ -742,6 +766,11 @@ namespace platf {
 
   void free_gamepad(input_t &input, int nr) {
     auto raw = (input_raw_t *) input.get();
+
+    if (raw->vpad && raw->vpad->has(nr)) {
+      raw->vpad->release(nr);
+      return;
+    }
 
     if (virtualhid::has_gamepad(raw->virtualhid, nr)) {
       virtualhid::free_gamepad(raw->virtualhid, nr);
@@ -1007,6 +1036,11 @@ namespace platf {
    */
   void gamepad_update(input_t &input, int nr, const gamepad_state_t &gamepad_state) {
     auto raw = (input_raw_t *) input.get();
+    if (raw->vpad && raw->vpad->has(nr)) {
+      raw->vpad->update(nr, gamepad_state);
+      return;
+    }
+
     if (virtualhid::has_gamepad(raw->virtualhid, nr)) {
       virtualhid::gamepad_update(raw->virtualhid, nr, gamepad_state);
       return;
@@ -1275,7 +1309,7 @@ namespace platf {
 
     const auto raw = (input_raw_t *) input->get();
     if (config::input.gamepad_driver == config::GAMEPAD_DRIVER_VIGEMBUS) {
-      gps = vigembus_supported_gamepads(raw->vigem != nullptr);
+      gps = vigembus_supported_gamepads((raw->vigem != nullptr || raw->vpad != nullptr));
       return gps;
     }
 
@@ -1287,7 +1321,7 @@ namespace platf {
           gamepad.reason_disabled = "gamepads.virtualhid-not-available";
         }
       } else {
-        gps = vigembus_supported_gamepads(raw->vigem != nullptr);
+        gps = vigembus_supported_gamepads((raw->vigem != nullptr || raw->vpad != nullptr));
       }
       return gps;
     }
@@ -1295,11 +1329,11 @@ namespace platf {
     const auto &capabilities = raw->virtualhid.runtime->capabilities();
     const auto licensed = !capabilities.requires_installed_driver || lvh::get_license_status().license.licensed();
     if (const auto use_virtualhid = virtualhid::should_use_gamepad_runtime(capabilities, config::input.gamepad_driver, licensed); !use_virtualhid && config::input.gamepad_driver != config::GAMEPAD_DRIVER_VIRTUALHID) {
-      gps = vigembus_supported_gamepads(raw->vigem != nullptr);
+      gps = vigembus_supported_gamepads((raw->vigem != nullptr || raw->vpad != nullptr));
       return gps;
     }
 
-    gps = virtualhid::supported_gamepads(raw->virtualhid.runtime.get(), raw->vigem != nullptr, licensed);
+    gps = virtualhid::supported_gamepads(raw->virtualhid.runtime.get(), (raw->vigem != nullptr || raw->vpad != nullptr), licensed);
     return gps;
   }
 
