@@ -1,0 +1,96 @@
+---
+# Tray-less Windows build of Sunshine.
+#
+# Builds upstream's ci-windows.yml with SUNSHINE_ENABLE_TRAY=OFF and produces
+# only the AMD64 portable Windows package; signing and upstream publishing are
+# off. The tray icon can only be disabled at compile time, which is why this
+# branch exists.
+#
+# The result is published as a RELEASE ASSET (the CI artifact stays too):
+# GitHub requires authentication to download artifacts even on public
+# repositories, and artifacts expire after 90 days. A release asset downloads
+# without credentials and stays available.
+#
+# Bumping the upstream version = rebase this branch and update the two input
+# defaults below together.
+name: Tray-less Windows Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Upstream version (goes into the package name and the tag)"
+        required: true
+        default: "2026.914.233613"
+      release_commit:
+        description: "Upstream commit"
+        required: true
+        default: "63d35f702ee9e362e43263742981836ec0710384"
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci-windows.yml
+    secrets: inherit
+    with:
+      publish_release: "false"
+      release_commit: ${{ inputs.release_commit }}
+      release_version: ${{ inputs.release_version }}
+
+  publish:
+    needs: windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download the build artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: build-Windows-AMD64
+          path: artifacts
+
+      - name: Prepare tag and checksum
+        id: meta
+        run: |
+          set -euo pipefail
+          zip="$(ls artifacts/Sunshine-Windows-AMD64-*.zip | head -1)"
+          echo "zip=$zip" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$zip")" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(sha256sum "$zip" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "tag=trayless-${{ inputs.release_version }}-r${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish as a release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "${{ steps.meta.outputs.tag }}" "${{ steps.meta.outputs.zip }}" \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "Tray-less Windows build ${{ inputs.release_version }} (run ${{ github.run_number }})" \
+            --notes "$(printf '%s\n' \
+              "Tray-less (SUNSHINE_ENABLE_TRAY=OFF) AMD64 Windows build." \
+              "" \
+              "| | |" \
+              "|---|---|" \
+              "| upstream version | ${{ inputs.release_version }} |" \
+              "| upstream commit | ${{ inputs.release_commit }} |" \
+              "| branch commit | ${{ github.sha }} |" \
+              "| file | ${{ steps.meta.outputs.name }} |" \
+              "| sha256 | \`${{ steps.meta.outputs.sha256 }}\` |" \
+              "" \
+              "Source is this repository (GPL-3.0).")"
+
+      - name: Write the summary
+        run: |
+          {
+            echo "### Published: ${{ steps.meta.outputs.tag }}"
+            echo ""
+            echo "- file: \`${{ steps.meta.outputs.name }}\`"
+            echo "- sha256: \`${{ steps.meta.outputs.sha256 }}\`"
+            echo "- commit: \`${{ github.sha }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
