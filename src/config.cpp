@@ -4,6 +4,7 @@
  */
 // standard includes
 #include <algorithm>
+#include <cstdio>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -795,6 +796,9 @@ namespace config {
     },  // display_device
 
     0,  // max_bitrate
+    0,  // max_client_bitrate
+    {},  // allowed_resolutions
+    {},  // allowed_framerates
     0  // minimum_fps_target (0 = framerate)
   };
 
@@ -1042,6 +1046,15 @@ namespace config {
     }
 
     return vars;
+  }
+
+  bool video_mode_allowed(const int width, const int height, const int framerate) {
+    const auto &resolutions = video.allowed_resolutions;
+    if (!resolutions.empty() && std::ranges::find(resolutions, std::pair {width, height}) == resolutions.end()) {
+      return false;
+    }
+    const auto &framerates = video.allowed_framerates;
+    return framerates.empty() || std::ranges::find(framerates, framerate) != framerates.end();
   }
 
   bool persist_config_option_if_missing(const std::string_view name, const std::string_view value) {
@@ -1721,6 +1734,29 @@ namespace config {
     }
 
     int_f(vars, "max_bitrate", video.max_bitrate);
+    int_f(vars, "max_client_bitrate", video.max_client_bitrate);
+    {
+      std::vector<std::string> modes;
+      list_string_f(vars, "allowed_resolutions", modes);
+      if (!modes.empty()) {
+        video.allowed_resolutions.clear();
+        for (const auto &mode : modes) {
+          int width = 0;
+          int height = 0;
+          if (std::sscanf(mode.c_str(), "%dx%d", &width, &height) == 2 && width > 0 && height > 0) {
+            video.allowed_resolutions.emplace_back(width, height);
+          } else {
+            BOOST_LOG(warning) << "config: allowed_resolutions: ignoring invalid entry ["sv << mode << ']';
+          }
+        }
+        if (video.allowed_resolutions.empty()) {
+          // A list was given but nothing in it parsed: allow nothing rather than everything.
+          BOOST_LOG(error) << "config: allowed_resolutions has no valid entry; every resolution will be rejected"sv;
+          video.allowed_resolutions.emplace_back(0, 0);
+        }
+      }
+    }
+    list_int_f(vars, "allowed_framerates", video.allowed_framerates);
     double_between_f(vars, "minimum_fps_target", video.minimum_fps_target, {0.0, 1000.0});
 
     path_f(vars, "pkey", nvhttp.pkey);

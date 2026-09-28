@@ -1250,6 +1250,30 @@ namespace rtsp_stream {
       config.audio.flags[audio::config_t::CONTINUOUS_AUDIO] = true;
     }
 
+    // Host-side stream limits. The mode checked here is the one the encoder will use, so a
+    // client cannot get around the check by launching with one mode and announcing another.
+    if (!config::video_mode_allowed(config.monitor.width, config.monitor.height, config.monitor.framerate)) {
+      BOOST_LOG(warning) << "Client requested "sv << config.monitor.width << 'x' << config.monitor.height << 'x'
+                         << config.monitor.framerate << ", which is not allowed on this host"sv;
+
+      respond(sock, session, &option, 403, "FORBIDDEN", req->sequenceNumber, {});
+      return;
+    }
+
+    // The ceiling applies to the client's total before the FEC and audio adjustment below, so
+    // the traffic on the wire stays within it, and for every encoder (max_bitrate is only
+    // applied on the FFmpeg path).
+    if (config::video.max_client_bitrate > 0) {
+      const auto ceiling = (std::int64_t) config::video.max_client_bitrate;
+      if (configuredBitrateKbps > ceiling) {
+        BOOST_LOG(info) << "Client bitrate "sv << configuredBitrateKbps << " Kbps capped to "sv << ceiling << " Kbps"sv;
+        configuredBitrateKbps = ceiling;
+      } else if (!configuredBitrateKbps && config.monitor.bitrate > ceiling) {
+        BOOST_LOG(info) << "Client bitrate "sv << config.monitor.bitrate << " Kbps capped to "sv << ceiling << " Kbps"sv;
+        config.monitor.bitrate = (int) ceiling;
+      }
+    }
+
     // If the client sent a configured bitrate, we will choose the actual bitrate ourselves
     // by using FEC percentage and audio quality settings. If the calculated bitrate ends up
     // too low, we'll allow it to exceed the limits rather than reducing the encoding bitrate

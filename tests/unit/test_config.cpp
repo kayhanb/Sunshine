@@ -124,3 +124,61 @@ TEST_F(ConfigPersistenceTest, SelectsAllDriversOnlyForLicensedUsersWithoutAPrefe
   EXPECT_FALSE(config::select_all_gamepad_drivers_if_licensed(true));
   EXPECT_EQ(file_handler::read_file(config_file().string().c_str()), "gamepad_driver = all\n");
 }
+
+namespace {
+
+  /**
+   * @brief Fixture that restores the configuration changed by the stream limit tests.
+   */
+  class StreamLimitConfigTest: public testing::Test {
+  protected:
+    /**
+     * @brief Restore the configuration captured before the test.
+     */
+    void TearDown() override {
+      config::video = original_video_;
+      config::audio = original_audio_;
+      config::stream = original_stream_;
+      config::nvhttp = original_nvhttp_;
+      config::input = original_input_;
+      config::sunshine = original_sunshine_;
+    }
+
+  private:
+    config::video_t original_video_ {config::video};  ///< Video configuration restored after each test.
+    config::audio_t original_audio_ {config::audio};  ///< Audio configuration restored after each test.
+    config::stream_t original_stream_ {config::stream};  ///< Stream configuration restored after each test.
+    config::nvhttp_t original_nvhttp_ {config::nvhttp};  ///< HTTP configuration restored after each test.
+    config::input_t original_input_ {config::input};  ///< Input configuration restored after each test.
+    config::sunshine_t original_sunshine_ {config::sunshine};  ///< Core configuration restored after each test.
+  };
+
+}  // namespace
+
+TEST_F(StreamLimitConfigTest, EmptyListsAllowEveryMode) {
+  config::video.allowed_resolutions.clear();
+  config::video.allowed_framerates.clear();
+
+  EXPECT_TRUE(config::video_mode_allowed(3840, 2160, 120));
+  EXPECT_TRUE(config::video_mode_allowed(1366, 768, 50));
+}
+
+TEST_F(StreamLimitConfigTest, ParsesLimitsAndChecksModes) {
+  config::apply_config_for_test(
+    "max_client_bitrate = 20000\n"
+    "allowed_resolutions = [1280x720, 1920x1080]\n"
+    "allowed_framerates = [30,60]\n"sv
+  );
+
+  EXPECT_EQ(config::video.max_client_bitrate, 20000);
+  EXPECT_TRUE(config::video_mode_allowed(1920, 1080, 60));
+  EXPECT_TRUE(config::video_mode_allowed(1280, 720, 30));
+  EXPECT_FALSE(config::video_mode_allowed(2560, 1440, 60));
+  EXPECT_FALSE(config::video_mode_allowed(1920, 1080, 120));
+}
+
+TEST_F(StreamLimitConfigTest, ListWithoutValidEntryRejectsEveryResolution) {
+  config::apply_config_for_test("allowed_resolutions = [wide]\n"sv);
+
+  EXPECT_FALSE(config::video_mode_allowed(1920, 1080, 60));
+}

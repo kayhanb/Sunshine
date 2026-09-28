@@ -1329,6 +1329,25 @@ namespace nvhttp {
   }
 
   /**
+   * @brief Reject a launch or resume whose display mode this host does not allow.
+   *
+   * @param launch_session Session built from the request.
+   * @param tree Response tree filled with the error when the mode is rejected.
+   * @return True when the mode was rejected.
+   */
+  bool reject_disallowed_mode(const rtsp_stream::launch_session_t &launch_session, pt::ptree &tree) {
+    if (config::video_mode_allowed(launch_session.width, launch_session.height, launch_session.fps)) {
+      return false;
+    }
+    BOOST_LOG(warning) << "Client requested display mode "sv << launch_session.width << 'x' << launch_session.height << 'x'
+                       << launch_session.fps << ", which is not allowed on this host"sv;
+    tree.put("root.resume", 0);
+    tree.put("root.<xmlattr>.status_code", 403);
+    tree.put("root.<xmlattr>.status_message", "The requested display mode is not allowed on this host");
+    return true;
+  }
+
+  /**
    * @brief Launch the requested application for a GameStream session.
    *
    * @param host_audio Host audio.
@@ -1383,6 +1402,9 @@ namespace nvhttp {
 
     host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     auto launch_session = make_launch_session(host_audio, args);
+    if (reject_disallowed_mode(*launch_session, tree)) {
+      return;
+    }
 
     if (rtsp_stream::session_count() == 0) {
       // The display should be restored in case something fails as there are no other sessions.
@@ -1498,6 +1520,9 @@ namespace nvhttp {
       host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     }
     const auto launch_session = make_launch_session(host_audio, args);
+    if (reject_disallowed_mode(*launch_session, tree)) {
+      return;
+    }
 
     if (no_active_sessions) {
       // We want to prepare display only if there are no active sessions at

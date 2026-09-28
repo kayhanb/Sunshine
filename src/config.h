@@ -218,6 +218,9 @@ namespace config {
     } dd;  ///< Display-device integration settings.
 
     int max_bitrate;  ///< Maximum bitrate ceiling in kbps for bitrate requested from the client.
+    int max_client_bitrate;  ///< Ceiling in kbps for the total bitrate a client may configure, applied before the FEC and audio adjustment and for every encoder (0 = no ceiling).
+    std::vector<std::pair<int, int>> allowed_resolutions;  ///< Resolutions a client may stream at (empty = any).
+    std::vector<int> allowed_framerates;  ///< Framerates a client may stream at (empty = any).
     double minimum_fps_target;  ///< Lowest framerate that will be used when streaming. Range 0-1000, 0 = half of client's requested framerate.
   };
 
@@ -436,6 +439,16 @@ namespace config {
    * @return True when the option was appended successfully; otherwise, false.
    */
   bool persist_config_option_if_missing(std::string_view name, std::string_view value);
+
+  /**
+   * @brief Check a requested stream mode against `allowed_resolutions` and `allowed_framerates`.
+   *
+   * @param width Requested width in pixels.
+   * @param height Requested height in pixels.
+   * @param framerate Requested framerate.
+   * @return True when both lists allow the mode (an empty list allows everything).
+   */
+  bool video_mode_allowed(int width, int height, int framerate);
 
   /**
    * @brief Select all available gamepad drivers when a licensed user has not made a choice.

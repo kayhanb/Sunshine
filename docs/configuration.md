@@ -1467,6 +1467,79 @@ supported on the current platform.
     </tr>
 </table>
 
+### max_client_bitrate
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            The maximum total bitrate (in Kbps) a client may configure. The ceiling is applied to the client's
+            total before the FEC and audio adjustment, so the traffic on the wire stays within it, and it applies
+            to every encoder. If set to 0, the client's bitrate is used as requested.
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            0
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            max_client_bitrate = 20000
+            @endcode</td>
+    </tr>
+</table>
+
+### allowed_resolutions
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            The resolutions a client may stream at, as `WIDTHxHEIGHT`. A launch, resume or stream setup that asks
+            for any other resolution is rejected. If empty, every resolution is allowed.
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            []
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            allowed_resolutions = [1280x720,1920x1080]
+            @endcode</td>
+    </tr>
+</table>
+
+### allowed_framerates
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            The framerates a client may stream at. A launch, resume or stream setup that asks for any other
+            framerate is rejected. If empty, every framerate is allowed.
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            []
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            allowed_framerates = [30,60]
+            @endcode</td>
+    </tr>
+</table>
+
 ### minimum_fps_target
 
 <table>
