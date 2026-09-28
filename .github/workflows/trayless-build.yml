@@ -21,11 +21,11 @@ on:
       release_version:
         description: "Upstream version (goes into the package name and the tag)"
         required: true
-        default: "2026.914.233613"
+        default: "2026.922.203725"
       release_commit:
         description: "Upstream commit"
         required: true
-        default: "63d35f702ee9e362e43263742981836ec0710384"
+        default: "f21d344cd4f6c54b95296374cbe692b410068a47"
 
 permissions:
   contents: read
