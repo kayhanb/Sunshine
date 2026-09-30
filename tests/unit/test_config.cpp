@@ -182,3 +182,11 @@ TEST_F(StreamLimitConfigTest, ListWithoutValidEntryRejectsEveryResolution) {
 
   EXPECT_FALSE(config::video_mode_allowed(1920, 1080, 60));
 }
+
+TEST_F(StreamLimitConfigTest, ProbesYuv444AndHdrUnlessDisabled) {
+  config::apply_config_for_test(""sv);
+  EXPECT_TRUE(config::video.probe_yuv444_hdr);
+
+  config::apply_config_for_test("probe_yuv444_hdr = disabled\n"sv);
+  EXPECT_FALSE(config::video.probe_yuv444_hdr);
+}

@@ -1540,6 +1540,32 @@ supported on the current platform.
     </tr>
 </table>
 
+### probe_yuv444_hdr
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            Whether encoder probing also tests YUV 4:4:4 and HDR (10-bit) support. Each of these tests
+            reinitializes capture, and probing runs again at the start of a session whenever the display
+            configuration changed, so on hosts whose clients never use these formats disabling it shortens
+            session start. When disabled, YUV 4:4:4 and HDR are not advertised.
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            enabled
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            probe_yuv444_hdr = disabled
+            @endcode</td>
+    </tr>
+</table>
+
 ### minimum_fps_target
 
 <table>

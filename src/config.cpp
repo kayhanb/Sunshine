@@ -799,6 +799,7 @@ namespace config {
     0,  // max_client_bitrate
     {},  // allowed_resolutions
     {},  // allowed_framerates
+    true,  // probe_yuv444_hdr
     0  // minimum_fps_target (0 = framerate)
   };
 
@@ -1757,6 +1758,7 @@ namespace config {
       }
     }
     list_int_f(vars, "allowed_framerates", video.allowed_framerates);
+    bool_f(vars, "probe_yuv444_hdr", video.probe_yuv444_hdr);
     double_between_f(vars, "minimum_fps_target", video.minimum_fps_target, {0.0, 1000.0});
 
     path_f(vars, "pkey", nvhttp.pkey);

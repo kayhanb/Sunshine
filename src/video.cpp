@@ -3176,14 +3176,16 @@ namespace video {
 
     // Test HDR and YUV444 support
     {
+      // A codec that did not pass is not tested further, so skip the display reset too:
+      // each reset reinitializes capture (~0.25 s) and the result would be discarded.
       auto test_yuv444 = [&](auto &flag_map, auto video_format) {
         const config_t config = {1920, 1080, 60, 6000, 1000, 1, 0, 1, video_format, 0, 1, 0};
 
-        reset_display(disp, encoder.platform_formats->dev_type, output_name, config);
-        if (!disp) {
+        if (!flag_map[encoder_t::PASSED]) {
           return;
         }
-        if (!flag_map[encoder_t::PASSED]) {
+        reset_display(disp, encoder.platform_formats->dev_type, output_name, config);
+        if (!disp) {
           return;
         }
 
@@ -3199,11 +3201,11 @@ namespace video {
       auto test_yuv420_hdr = [&](auto &flag_map, auto video_format) {
         const config_t config = {1920, 1080, 60, 6000, 1000, 1, 0, 3, video_format, 1, 0, 0};
 
-        reset_display(disp, encoder.platform_formats->dev_type, output_name, config);
-        if (!disp) {
+        if (!flag_map[encoder_t::PASSED]) {
           return;
         }
-        if (!flag_map[encoder_t::PASSED]) {
+        reset_display(disp, encoder.platform_formats->dev_type, output_name, config);
+        if (!disp) {
           return;
         }
 
@@ -3219,11 +3221,11 @@ namespace video {
       auto test_yuv444_hdr = [&](auto &flag_map, auto video_format) {
         const config_t config = {1920, 1080, 60, 6000, 1000, 1, 0, 3, video_format, 1, 1, 0};
 
-        reset_display(disp, encoder.platform_formats->dev_type, output_name, config);
-        if (!disp) {
+        if (!flag_map[encoder_t::PASSED]) {
           return;
         }
-        if (!flag_map[encoder_t::PASSED]) {
+        reset_display(disp, encoder.platform_formats->dev_type, output_name, config);
+        if (!disp) {
           return;
         }
 
@@ -3236,17 +3238,26 @@ namespace video {
         }
       };
 
-      test_yuv444(encoder.h264, 0);
       // HDR is not supported with H.264. Don't bother even trying it.
       encoder.h264[encoder_t::DYNAMIC_RANGE] = false;
       encoder.h264[encoder_t::DYNAMIC_RANGE_YUV444] = false;
 
-      test_yuv444(encoder.hevc, 1);
-      test_yuv420_hdr(encoder.hevc, 1);
-      test_yuv444_hdr(encoder.hevc, 1);
-      test_yuv444(encoder.av1, 2);
-      test_yuv420_hdr(encoder.av1, 2);
-      test_yuv444_hdr(encoder.av1, 2);
+      if (config::video.probe_yuv444_hdr) {
+        test_yuv444(encoder.h264, 0);
+        test_yuv444(encoder.hevc, 1);
+        test_yuv420_hdr(encoder.hevc, 1);
+        test_yuv444_hdr(encoder.hevc, 1);
+        test_yuv444(encoder.av1, 2);
+        test_yuv420_hdr(encoder.av1, 2);
+        test_yuv444_hdr(encoder.av1, 2);
+      } else {
+        // Not probed, so not advertised: the capability bits start set.
+        for (auto *codec : {&encoder.h264, &encoder.hevc, &encoder.av1}) {
+          (*codec)[encoder_t::YUV444] = false;
+          (*codec)[encoder_t::DYNAMIC_RANGE] = false;
+          (*codec)[encoder_t::DYNAMIC_RANGE_YUV444] = false;
+        }
+      }
     }
 
     encoder.h264[encoder_t::VUI_PARAMETERS] = encoder.h264[encoder_t::VUI_PARAMETERS] && !config::sunshine.flags[config::flag::FORCE_VIDEO_HEADER_REPLACE];

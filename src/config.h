@@ -221,6 +221,7 @@ namespace config {
     int max_client_bitrate;  ///< Ceiling in kbps for the total bitrate a client may configure, applied before the FEC and audio adjustment and for every encoder (0 = no ceiling).
     std::vector<std::pair<int, int>> allowed_resolutions;  ///< Resolutions a client may stream at (empty = any).
     std::vector<int> allowed_framerates;  ///< Framerates a client may stream at (empty = any).
+    bool probe_yuv444_hdr;  ///< Probe YUV 4:4:4 and HDR encoder support (disable when no client uses them; each probe reinitializes capture).
     double minimum_fps_target;  ///< Lowest framerate that will be used when streaming. Range 0-1000, 0 = half of client's requested framerate.
   };
 
