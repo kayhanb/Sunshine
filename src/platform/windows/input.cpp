@@ -543,7 +543,7 @@ namespace platf {
     }
 
     const auto &capabilities = raw.virtualhid.runtime->capabilities();
-    const auto licensed = !capabilities.requires_installed_driver || lvh::get_license_status().license.licensed();
+    const auto licensed = !capabilities.requires_installed_driver || vhid_bridge::virtualhid_licensed();
     return virtualhid::should_use_gamepad_runtime(capabilities, config::input.gamepad_driver, licensed);
   }
 
@@ -1327,7 +1327,7 @@ namespace platf {
     }
 
     const auto &capabilities = raw->virtualhid.runtime->capabilities();
-    const auto licensed = !capabilities.requires_installed_driver || lvh::get_license_status().license.licensed();
+    const auto licensed = !capabilities.requires_installed_driver || vhid_bridge::virtualhid_licensed();
     if (const auto use_virtualhid = virtualhid::should_use_gamepad_runtime(capabilities, config::input.gamepad_driver, licensed); !use_virtualhid && config::input.gamepad_driver != config::GAMEPAD_DRIVER_VIRTUALHID) {
       gps = vigembus_supported_gamepads((raw->vigem != nullptr || raw->vpad != nullptr));
       return gps;

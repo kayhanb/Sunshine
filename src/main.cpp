@@ -27,7 +27,7 @@
 // lib includes
 #include <rs.h>
 #ifdef _WIN32
-  #include <libvirtualhid/license.hpp>
+  #include "platform/windows/vhid_bridge.h"
 #endif
 
 // local includes
@@ -288,7 +288,7 @@ int main(int argc, char *argv[]) {
   }
 
 #ifdef _WIN32
-  config::select_all_gamepad_drivers_if_licensed(lvh::get_license_status().license.licensed());
+  config::select_all_gamepad_drivers_if_licensed(platf::vhid_bridge::virtualhid_licensed());
 #endif
 
   // Adding guard here first as it also performs recovery after crash,

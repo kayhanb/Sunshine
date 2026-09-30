@@ -14,6 +14,9 @@
 #include <string>
 #include <vector>
 
+// lib includes
+#include <libvirtualhid/license.hpp>
+
 // local includes
 #include "src/logging.h"
 #include "src/platform/windows/vhid_bridge.h"
@@ -379,6 +382,24 @@ namespace platf::vhid_bridge {
       buttons_ = 0;
       send_mouse(0, 0, 0, 0);
     }
+  }
+
+  bool virtualhid_licensed() {
+    SC_HANDLE manager = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (!manager) {
+      return false;
+    }
+    SC_HANDLE broker = OpenServiceW(manager, L"libvirtualhid_broker", SERVICE_QUERY_STATUS);
+    const bool installed = broker != nullptr;
+    if (broker) {
+      CloseServiceHandle(broker);
+    }
+    CloseServiceHandle(manager);
+    if (!installed) {
+      BOOST_LOG(debug) << "Virtual HID Driver license broker is not installed; skipping the license check"sv;
+      return false;
+    }
+    return lvh::get_license_status().license.licensed();
   }
 
 }  // namespace platf::vhid_bridge

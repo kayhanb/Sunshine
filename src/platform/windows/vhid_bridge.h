@@ -103,4 +103,16 @@ namespace platf::vhid_bridge {
    */
   device_t *get(input_t &input);
 
+  /**
+   * @brief Whether the Virtual HID Driver is licensed, without waiting for an absent license broker.
+   *
+   * lvh::get_license_status() looks for the broker's named pipe 500 times with Sleep(10) before
+   * giving up, which is about 8.3 s with the default timer resolution. Startup asks three times, so a
+   * host without the broker service spent ~25 s before it could stream. Without the service there is
+   * no license, so the broker is only asked when the service is installed.
+   *
+   * @return True when the broker service exists and reports a valid license.
+   */
+  bool virtualhid_licensed();
+
 }  // namespace platf::vhid_bridge
