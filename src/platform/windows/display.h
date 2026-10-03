@@ -304,9 +304,10 @@ namespace platf::dxgi {
      *
      * @param config Configuration values to apply.
      * @param display_name Display name.
+     * @param require_duplication Whether the output must pass the Desktop Duplication test. Windows.Graphics.Capture does not use that API, and on a paravirtualized GPU the test fails for every output.
      * @return 0 on success; nonzero or negative platform status on failure.
      */
-    int init(const ::video::config_t &config, const std::string &display_name);
+    int init(const ::video::config_t &config, const std::string &display_name, bool require_duplication = true);
 
     capture_e capture(const push_captured_image_cb_t &push_captured_image_cb, const pull_free_image_cb_t &pull_free_image_cb, bool *cursor) override;
 

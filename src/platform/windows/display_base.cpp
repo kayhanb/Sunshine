@@ -449,7 +449,7 @@ namespace platf::dxgi {
     }
   }
 
-  int display_base_t::init(const ::video::config_t &config, const std::string &display_name) {
+  int display_base_t::init(const ::video::config_t &config, const std::string &display_name, bool require_duplication) {
     std::once_flag windows_cpp_once_flag;
 
     std::call_once(windows_cpp_once_flag, []() {
@@ -513,7 +513,7 @@ namespace platf::dxgi {
             continue;
           }
 
-          if (desc.AttachedToDesktop && test_dxgi_duplication(adapter_tmp, output_tmp, false)) {
+          if (desc.AttachedToDesktop && (!require_duplication || test_dxgi_duplication(adapter_tmp, output_tmp, false))) {
             output = std::move(output_tmp);
 
             offset_x = desc.DesktopCoordinates.left;
@@ -1109,8 +1109,10 @@ namespace platf {
           << "    Resolution        : "sv << width << 'x' << height << std::endl
           << std::endl;
 
-        // Don't include the display in the list if we can't actually capture it
-        if (desc.AttachedToDesktop && dxgi::test_dxgi_duplication(adapter, output, true)) {
+        // Don't include the display in the list if we can't actually capture it.
+        // Windows.Graphics.Capture does not go through Desktop Duplication, so the
+        // test says nothing about it when that backend is selected explicitly.
+        if (desc.AttachedToDesktop && (config::video.capture == "wgc" || dxgi::test_dxgi_duplication(adapter, output, true))) {
           display_names.emplace_back(std::move(device_name));
         }
       }
