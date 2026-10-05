@@ -137,6 +137,7 @@ namespace config {
     std::string encoder;  ///< Encoder backend name selected by configuration.
     std::string adapter_name;  ///< Display adapter name selected in configuration.
     std::string output_name;  ///< Display output name selected in configuration.
+    std::string shared_capture_name;  ///< Base name of the shared frame source read by the `shared` capture backend.
 
     /**
      * @brief Display-device integration settings.

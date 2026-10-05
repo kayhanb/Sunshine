@@ -792,6 +792,92 @@ namespace platf::dxgi {
   /**
    * Display backend that uses Windows.Graphics.Capture with a hardware encoder.
    */
+  struct shared_frame_header_t;
+
+  /**
+   * @brief Reader for frames that an indirect display driver publishes as a shared texture.
+   *
+   * The driver copies every frame of its virtual monitor into a named texture and
+   * signals a named event. Nothing here goes through an operating system capture
+   * API, so it works where Desktop Duplication is unavailable (paravirtualized
+   * GPU) and where Windows.Graphics.Capture cannot start (no shell process).
+   */
+  class shared_capture_t {
+    HANDLE mapping = nullptr;  ///< File mapping that holds the frame header.
+    HANDLE frame_event = nullptr;  ///< Event the driver sets after publishing a frame.
+    const volatile shared_frame_header_t *header = nullptr;  ///< Frame header written by the driver.
+    texture2d_t texture;  ///< The published texture, opened on the capture device.
+    keyed_mutex_t mutex;  ///< Keyed mutex guarding the published texture.
+    std::uint32_t generation = 0;  ///< Texture generation this reader opened.
+    bool first_frame = true;  ///< Whether the current texture content has not been taken yet.
+    bool locked = false;  ///< Whether the keyed mutex is currently held.
+
+  public:
+    shared_capture_t() = default;
+    shared_capture_t(const shared_capture_t &) = delete;
+    shared_capture_t &operator=(const shared_capture_t &) = delete;
+    ~shared_capture_t();
+
+    /**
+     * @brief Open the shared frame source named by `shared_capture_name`.
+     *
+     * @param display Display whose device opens the texture; receives the capture format.
+     * @param config Configuration values to apply.
+     * @return 0 on success; -1 when the source is not published or cannot be opened.
+     */
+    int init(display_base_t *display, const ::video::config_t &config);
+    /**
+     * @brief Acquire the next published frame.
+     *
+     * The returned texture stays locked against the driver until release_frame().
+     *
+     * @param timeout Maximum time to wait for a new frame.
+     * @param out Receives the published texture.
+     * @param out_time QPC timestamp taken by the driver when it published the frame.
+     * @return Capture status for the frame acquisition attempt.
+     */
+    capture_e next_frame(std::chrono::milliseconds timeout, ID3D11Texture2D **out, uint64_t &out_time);
+    /**
+     * @brief Give the published texture back to the driver.
+     *
+     * @return Capture status after releasing the current frame.
+     */
+    capture_e release_frame();
+  };
+
+  /**
+   * @brief Display backend that reads a shared frame source into GPU memory.
+   */
+  class display_shared_vram_t: public display_vram_t {
+    shared_capture_t dup;  ///< Reader for the shared frame source.
+
+  public:
+    /**
+     * @brief Initialize the display and open the shared frame source.
+     *
+     * @param config Configuration values to apply.
+     * @param display_name Display name.
+     * @return 0 on success; nonzero or negative platform status on failure.
+     */
+    int init(const ::video::config_t &config, const std::string &display_name);
+    /**
+     * @brief Capture a display frame into the provided image object.
+     *
+     * @param pull_free_image_cb Callback that provides an available image buffer.
+     * @param img_out Captured image buffer returned to the streaming pipeline.
+     * @param timeout Maximum time to wait for the operation.
+     * @param cursor_visible Ignored: the published frames already contain what the operating system composed.
+     * @return Capture status reported to the streaming pipeline.
+     */
+    capture_e snapshot(const pull_free_image_cb_t &pull_free_image_cb, std::shared_ptr<platf::img_t> &img_out, std::chrono::milliseconds timeout, bool cursor_visible) override;
+    /**
+     * @brief Release resources associated with the last captured snapshot.
+     *
+     * @return Capture status after releasing the current snapshot.
+     */
+    capture_e release_snapshot() override;
+  };
+
   class display_wgc_vram_t: public display_vram_t {
     wgc_capture_t dup;
 

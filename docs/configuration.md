@@ -2332,6 +2332,39 @@ supported on the current platform.
             @note{Applies to Windows only.}
             @attention{This capture method is not compatible with the Sunshine service.}</td>
     </tr>
+    <tr>
+        <td>shared</td>
+        <td>Read the frames that an indirect display driver publishes as a shared texture, named by
+            [shared_capture_name](#shared_capture_name). No operating system capture API is involved. Never selected
+            automatically, and there is no system memory path: it needs a hardware encoder.
+            @note{Applies to Windows only.}</td>
+    </tr>
+</table>
+
+### shared_capture_name
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            Base name of the frame source read by the `shared` [capture](#capture) method. The driver of the virtual
+            monitor publishes, in the global object namespace, a 64-byte header as the file mapping `<name>Meta`, an
+            event `<name>Event` that it sets after every frame, and the frame itself as the keyed-mutex texture
+            `<name>-<generation>`. The header carries the size, format, generation and adapter of the texture.
+            @note{Applies to Windows only.}
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">Unset.</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            capture = shared
+            shared_capture_name = VirtualDisplayFrame
+            @endcode</td>
+    </tr>
 </table>
 
 ### encoder

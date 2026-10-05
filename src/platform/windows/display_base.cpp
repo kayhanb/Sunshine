@@ -1016,6 +1016,20 @@ namespace platf {
    * @param hwdevice_type enables possible use of hardware encoder
    */
   std::shared_ptr<display_t> display(mem_type_e hwdevice_type, const std::string &display_name, const video::config_t &config) {
+    // Selected explicitly only: it reads a frame source that a specific driver
+    // publishes, and it has no system memory path.
+    if (config::video.capture == "shared") {
+      if (hwdevice_type == mem_type_e::dxgi) {
+        auto disp = std::make_shared<dxgi::display_shared_vram_t>();
+
+        if (!disp->init(config, display_name)) {
+          return disp;
+        }
+      }
+
+      return nullptr;
+    }
+
     if (config::video.capture == "ddx" || config::video.capture.empty()) {
       if (hwdevice_type == mem_type_e::dxgi) {
         auto disp = std::make_shared<dxgi::display_ddup_vram_t>();
@@ -1111,8 +1125,9 @@ namespace platf {
 
         // Don't include the display in the list if we can't actually capture it.
         // Windows.Graphics.Capture does not go through Desktop Duplication, so the
-        // test says nothing about it when that backend is selected explicitly.
-        if (desc.AttachedToDesktop && (config::video.capture == "wgc" || dxgi::test_dxgi_duplication(adapter, output, true))) {
+        // test says nothing about it when that backend is selected explicitly. The
+        // same holds for the shared frame source.
+        if (desc.AttachedToDesktop && (config::video.capture == "wgc" || config::video.capture == "shared" || dxgi::test_dxgi_duplication(adapter, output, true))) {
           display_names.emplace_back(std::move(device_name));
         }
       }
