@@ -1316,6 +1316,10 @@ namespace confighttp {
       std::string uuid = input_tree.value("uuid", "");
       bool enabled = input_tree.value("enabled", true);
       output_tree["status"] = nvhttp::set_client_enabled(uuid, enabled);
+      // Optional: allow or deny input for this client; applies to its running session.
+      if (input_tree.contains("input") && output_tree["status"]) {
+        output_tree["status"] = nvhttp::set_client_input(uuid, input_tree.value("input", true));
+      }
 
       if (!enabled && output_tree["status"]) {
         auto cert = nvhttp::get_cert_by_uuid(uuid);
@@ -1866,7 +1870,8 @@ namespace confighttp {
         return;
       }
 
-      output_tree["status"] = nvhttp::pin(pairing_id, pin, name);
+      // Optional: pair the client as view-only ("input": false).
+      output_tree["status"] = nvhttp::pin(pairing_id, pin, name, input_tree.value("input", true));
       send_response(response, output_tree);
     } catch (std::exception &e) {
       BOOST_LOG(warning) << "SavePin: "sv << e.what();

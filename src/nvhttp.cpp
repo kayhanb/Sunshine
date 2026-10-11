@@ -173,6 +173,7 @@ namespace nvhttp {
     std::string uuid;  ///< Persistent Moonlight client UUID associated with the certificate.
     std::string cert;  ///< Certificate PEM string or path.
     bool enabled = true;  ///< Whether this persisted client entry may connect.
+    bool input = true;  ///< Whether input packets from this client are accepted (view-only when false).
   };
 
   /**
@@ -199,6 +200,8 @@ namespace nvhttp {
   std::atomic<uint32_t> session_id_counter;  ///< Monotonic counter used to allocate GameStream session IDs.
 
   // Set by TLS verify callback, read by launch/resume handler (single-threaded HTTPS server)
+  /// Bumped on every change to the paired-client records; see client_permission_generation().
+  std::atomic<std::uint64_t> permission_generation {1};  // NOSONAR(cpp:S5421): intentionally mutable global
   std::string last_verified_client_cert;  ///< Last client certificate accepted by the TLS verify callback.  // NOSONAR(cpp:S5421): intentionally mutable global
   std::string last_verified_client_name;  ///< Friendly name of last client certificate accepted by the TLS verify callback. // NOSONAR(cpp:S5421): intentionally mutable global
 
@@ -279,6 +282,7 @@ namespace nvhttp {
       named_cert_node.put("cert"s, named_cert.cert);
       named_cert_node.put("uuid"s, named_cert.uuid);
       named_cert_node.put("enabled"s, named_cert.enabled);
+      named_cert_node.put("input"s, named_cert.input);
       named_cert_nodes.push_back(std::make_pair(""s, named_cert_node));
     }
     root.add_child("root.named_devices"s, named_cert_nodes);
@@ -415,6 +419,7 @@ namespace nvhttp {
         named_cert.cert = el.get_child("cert").get_value<std::string>();
         named_cert.uuid = el.get_child("uuid").get_value<std::string>();
         named_cert.enabled = el.get<bool>("enabled", true);
+        named_cert.input = el.get<bool>("input", true);
         client.named_devices.emplace_back(named_cert);
       }
     }
@@ -440,7 +445,7 @@ namespace nvhttp {
    * @param cert Certificate data or object used by the operation.
    * @return Persistent UUID for the added client, or an empty string when the certificate is invalid.
    */
-  std::string add_authorized_client(const std::string &name, std::string &&cert) {
+  std::string add_authorized_client(const std::string &name, std::string &&cert, bool input = true) {
     auto certificate = crypto::x509(cert);
     if (!certificate) {
       return {};
@@ -448,6 +453,7 @@ namespace nvhttp {
 
     named_cert_t named_cert;
     named_cert.name = name;
+    named_cert.input = input;
     named_cert.cert = crypto::pem(certificate);
     named_cert.uuid = uuid_util::uuid_t::generate().string();
     const auto uuid = named_cert.uuid;
@@ -459,6 +465,7 @@ namespace nvhttp {
     });
     client_root.named_devices.emplace_back(std::move(named_cert));
     rebuild_client_cert_chain();
+    ++permission_generation;
 
     if (!config::sunshine.flags[config::flag::FRESH_STATE]) {
       save_state();
@@ -882,7 +889,7 @@ namespace nvhttp {
     bool paired = false;
     if (same_hash && verify) {
       // The client is now successfully paired and will be authorized to connect
-      paired = !add_authorized_client(client.name, std::move(client.cert)).empty();
+      paired = !add_authorized_client(client.name, std::move(client.cert), client.input).empty();
     }
 
     tree.put("root.paired", paired ? 1 : 0);
@@ -1111,7 +1118,7 @@ namespace nvhttp {
     }
   }
 
-  bool pin(const std::string_view pairing_id, std::string pin, std::string name) {
+  bool pin(const std::string_view pairing_id, std::string pin, std::string name, bool input) {
     if (!is_valid_pairing_id(pairing_id) || !is_valid_pairing_pin(pin) || !is_valid_pairing_name(name)) {
       return false;
     }
@@ -1134,6 +1141,7 @@ namespace nvhttp {
       getservercert(sess, tree, pin);
       if (!sess.failed) {
         sess.client.name = std::move(name);
+        sess.client.input = input;
       }
 
       if (!write_pairing_response(sess, tree) || sess.failed) {
@@ -1288,6 +1296,7 @@ namespace nvhttp {
       named_cert_node["name"] = named_cert.name;
       named_cert_node["uuid"] = named_cert.uuid;
       named_cert_node["enabled"] = named_cert.enabled;
+      named_cert_node["input"] = named_cert.input;
       named_cert_nodes.push_back(named_cert_node);
     }
 
@@ -1813,6 +1822,34 @@ namespace nvhttp {
       }
     }
     return false;
+  }
+
+  bool set_client_input(const std::string_view uuid, bool input) {
+    std::lock_guard lock {client_auth_mutex()};
+    for (auto &named_cert : client_root.named_devices) {
+      if (named_cert.uuid == uuid) {
+        named_cert.input = input;
+        ++permission_generation;
+        save_state();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool client_input_allowed(const std::string_view cert_pem) {
+    std::lock_guard lock {client_auth_mutex()};
+    for (const auto &named_cert : client_root.named_devices) {
+      if (named_cert.cert == cert_pem) {
+        return named_cert.input;
+      }
+    }
+    // No record: the session was not opened by a paired view-only client.
+    return true;
+  }
+
+  std::uint64_t client_permission_generation() {
+    return permission_generation.load();
   }
 
   /**

@@ -136,6 +136,7 @@ namespace nvhttp {
       std::string uniqueID = {};  ///< Client-provided pairing-session identifier.
       std::string cert = {};  ///< Client certificate bytes exchanged during pairing.
       std::string name = {};  ///< Client name recorded after successful pairing.
+      bool input = true;  ///< Whether the client may send input once paired.
     } client;  ///< Client object or client certificate data owned by this state..
 
     std::unique_ptr<crypto::aes_t> cipher_key = {};  ///< Cipher key.
@@ -317,7 +318,7 @@ namespace nvhttp {
    * bool pin_status = nvhttp::pin("0123456789abcdef0123456789abcdef", "1234", "laptop");
    * @examples_end
    */
-  bool pin(std::string_view pairing_id, std::string pin, std::string name);
+  bool pin(std::string_view pairing_id, std::string pin, std::string name, bool input = true);
 
   /**
    * @brief Remove single client.
@@ -337,6 +338,32 @@ namespace nvhttp {
    * @return true if the client was found and updated.
    */
   bool set_client_enabled(std::string_view uuid, bool enabled);
+
+  /**
+   * @brief Allow or deny input from one paired client.
+   *
+   * The change applies to running sessions of that client without reconnecting.
+   *
+   * @param uuid Persistent client UUID.
+   * @param input Whether keyboard, mouse, controller, touch and pen packets are accepted.
+   * @return `true` when the client exists.
+   */
+  bool set_client_input(std::string_view uuid, bool input);
+
+  /**
+   * @brief Check whether input from a paired client certificate is accepted.
+   *
+   * @param cert_pem Client certificate PEM bound to the stream session.
+   * @return `false` only when a paired record for this certificate denies input.
+   */
+  bool client_input_allowed(std::string_view cert_pem);
+
+  /**
+   * @brief Counter that changes whenever any client's permissions may have changed.
+   *
+   * Stream sessions cache the permission and refresh it when this value moves.
+   */
+  std::uint64_t client_permission_generation();
   /**
    * @brief Get cert by UUID.
    *

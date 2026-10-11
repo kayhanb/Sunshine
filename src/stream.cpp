@@ -29,6 +29,7 @@ extern "C" {
 #include "input.h"
 #include "logging.h"
 #include "network.h"
+#include "nvhttp.h"
 #include "platform/common.h"
 #include "process.h"
 #include "stream.h"
@@ -552,6 +553,8 @@ namespace stream {
 
     std::uint32_t launch_session_id;  ///< RTSP launch-session ID associated with this stream.
     std::string client_cert;  ///< PEM certificate for the paired client owning the stream.
+    std::uint64_t input_permission_generation = 0;  ///< Generation at which input_permission was last read.
+    bool input_permission = true;  ///< Cached per-client input permission; refreshed when the generation moves.
     std::string input_session_id;  ///< Stable client identity used to retain input devices across resume.
 
     safe::mail_raw_t::event_t<bool> shutdown_event;  ///< Event raised when the stream should shut down.
@@ -559,6 +562,25 @@ namespace stream {
 
     std::atomic<session::state_e> state;  ///< Current lifecycle state observed by stream workers.
   };
+
+  /**
+   * @brief Check whether input packets from this session's client are accepted.
+   *
+   * The permission is stored per paired client and may change while the stream runs,
+   * so it is cached and re-read only when the permission generation moves.
+   * Called from the control thread that owns the session's input packets.
+   *
+   * @param session Stream session receiving the input packet.
+   * @return `false` when the client is paired as view-only.
+   */
+  static bool input_permitted(session_t &session) {
+    const auto generation = nvhttp::client_permission_generation();
+    if (session.input_permission_generation != generation) {
+      session.input_permission = session.client_cert.empty() || nvhttp::client_input_allowed(session.client_cert);
+      session.input_permission_generation = generation;
+    }
+    return session.input_permission;
+  }
 
   /**
    * First part of cipher must be struct of type control_encrypted_t
@@ -1232,7 +1254,9 @@ namespace stream {
         std::copy(payload.end() - 16, payload.end(), std::begin(iv));
       }
 
-      input::passthrough(session->input, std::move(plaintext));
+      if (input_permitted(*session)) {
+        input::passthrough(session->input, std::move(plaintext));
+      }
     });
 
     server->map(packetTypes[IDX_ENCRYPTED], [server](session_t *session, const std::string_view &payload) {
@@ -1295,7 +1319,9 @@ namespace stream {
       // IDX_INPUT_DATA callback will attempt to decrypt unencrypted data, therefore we need pass it directly
       if (type == packetTypes[IDX_INPUT_DATA]) {
         plaintext.erase(std::begin(plaintext), std::begin(plaintext) + 4);
-        input::passthrough(session->input, std::move(plaintext));
+        if (input_permitted(*session)) {
+          input::passthrough(session->input, std::move(plaintext));
+        }
       } else {
         server->call(type, session, next_payload, true);
       }
