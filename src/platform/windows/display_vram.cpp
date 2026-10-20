@@ -212,6 +212,7 @@ namespace platf::dxgi {
     std::atomic<bool> active {false};  ///< An encode session is using the koclient encoder.
     std::atomic<bool> idr_requested {true};  ///< The next encoded frame must be an IDR frame.
     std::atomic<uint32_t> bitrate_mbps {20};  ///< Target bitrate.
+    std::atomic<uint32_t> color_flags {0};  ///< Colorimetry bits passed to the driver with DstX.
 
     /**
      * @brief Per-device staging texture used to trigger the encode.
@@ -253,10 +254,13 @@ namespace platf::dxgi {
         st.format = desc.Format;
       }
 
-      // DstX=1 requests an IDR frame, DstY carries the bitrate in Mbit/s.
+      // DstX: bit0 requests an IDR frame, bits 1-4 carry the colorimetry the client was told
+      // (the host encoder converts RGB with it and writes it into the VUI). DstY carries the
+      // bitrate in Mbit/s.
       D3D11_BOX box {0, 0, 0, desc.Width, desc.Height, 1};
       const UINT mbps = std::clamp<UINT>(bitrate_mbps.load(), 1, desc.Height);
-      ctx->CopySubresourceRegion(st.staging.get(), 0, force_idr ? 1 : 0, mbps, 0, src, 0, &box);
+      const UINT dst_x = (force_idr ? 1 : 0) | color_flags.load();
+      ctx->CopySubresourceRegion(st.staging.get(), 0, dst_x, mbps, 0, src, 0, &box);
 
       D3D11_MAPPED_SUBRESOURCE mapped;
       if (FAILED(ctx->Map(st.staging.get(), 0, D3D11_MAP_READ, 0, &mapped))) {
@@ -1348,7 +1352,7 @@ namespace platf::dxgi {
    */
   class koclient_encoder_t: public nvenc::nvenc_encoder {
   public:
-    bool create_encoder(const nvenc::nvenc_config &, const ::video::config_t &client_config, const ::video::sunshine_colorspace_t &, platf::pix_fmt_e) override {
+    bool create_encoder(const nvenc::nvenc_config &, const ::video::config_t &client_config, const ::video::sunshine_colorspace_t &colorspace, platf::pix_fmt_e) override {
       if (client_config.videoFormat != 0) {
         BOOST_LOG(error) << "koclient: only H.264 is supported";
         return false;
@@ -1356,9 +1360,13 @@ namespace platf::dxgi {
       width = client_config.width;
       height = client_config.height;
       koclient::bitrate_mbps = std::max(1, client_config.bitrate / 1000);
+      const uint32_t matrix = colorspace.colorspace == ::video::colorspace_e::rec601 ? 0 :
+                              colorspace.colorspace == ::video::colorspace_e::rec709 ? 1 :
+                                                                                        2;
+      koclient::color_flags = 0x10 | (matrix << 1) | (colorspace.full_range ? 0x8 : 0);
       koclient::idr_requested = true;
       koclient::active = true;
-      BOOST_LOG(info) << "koclient: encoder ready "sv << width << 'x' << height << ' ' << client_config.bitrate << " kbit/s"sv;
+      BOOST_LOG(info) << "koclient: encoder ready "sv << width << 'x' << height << ' ' << client_config.bitrate << " kbit/s, color flags 0x"sv << util::hex(koclient::color_flags.load()).to_string_view();
       return true;
     }
 
