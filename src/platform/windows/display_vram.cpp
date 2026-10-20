@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <mutex>
 
 // platform includes
 #include <d3dcompiler.h>
@@ -177,10 +178,6 @@ namespace platf::dxgi {
     // DXGI format of this image texture
     DXGI_FORMAT format;  ///< DXGI format of the captured texture.
 
-    // koclient encoder: H.264 bitstream encoded at capture time (empty when inactive)
-    std::vector<uint8_t> koclient_bitstream;  ///< Encoded frame for the koclient encoder.
-    bool koclient_idr = false;  ///< Whether koclient_bitstream is an IDR frame.
-
     virtual ~img_d3d_t() override {
       if (encoder_texture_handle) {
         CloseHandle(encoder_texture_handle);
@@ -284,22 +281,74 @@ namespace platf::dxgi {
     }
 
     /**
-     * @brief Encode a captured image on the capturing device (capture thread).
+     * @brief Capture-device state shared by the capture thread and the encode thread.
+     *
+     * Every frame of a stream must come from the same host encoder session, which belongs to
+     * the driver context that issues the encode, and every encoded frame must be sent (later
+     * frames reference it). So the encode thread encodes exactly the frames it sends, on the
+     * capture device, which is made multithread-protected for that.
      */
-    void encode_captured(ID3D11Device *device, ID3D11DeviceContext *ctx, ID3D11Texture2D *src, img_d3d_t &img) {
-      static encoder_staging_t staging;
-      img.koclient_bitstream.clear();
-      img.koclient_idr = false;
+    struct capture_state_t {
+      std::mutex mutex;
+      device_t device;
+      device_ctx_t ctx;
+      encoder_staging_t staging;
+    };
+
+    capture_state_t &capture_state() {
+      static capture_state_t state;
+      return state;
+    }
+
+    /**
+     * @brief Remember the capture device (capture thread, before the capture texture is locked).
+     */
+    void note_capture_device(ID3D11Device *device, ID3D11DeviceContext *ctx) {
       if (!active.load()) {
         return;
       }
-      const bool force_idr = idr_requested.exchange(false);
-      if (!encode(device, ctx, src, staging, force_idr, img.koclient_bitstream, img.koclient_idr)) {
-        img.koclient_bitstream.clear();
-        idr_requested = true;
-      } else if (force_idr && !img.koclient_idr) {
+      auto &state = capture_state();
+      std::lock_guard lock(state.mutex);
+      if (state.device.get() == device) {
+        return;
+      }
+      multithread_t mt;
+      if (SUCCEEDED(device->QueryInterface(IID_ID3D11Multithread, (void **) &mt))) {
+        mt->SetMultithreadProtected(TRUE);
+      }
+      device->AddRef();
+      ctx->AddRef();
+      state.device.reset(device);
+      state.ctx.reset(ctx);
+    }
+
+    /**
+     * @brief Encode a captured texture on the capture device (encode thread).
+     *
+     * @return False when the capture device is not known (encoder validation).
+     */
+    bool encode_texture(ID3D11Texture2D *texture, IDXGIKeyedMutex *mutex, bool force_idr, std::vector<uint8_t> &out, bool &idr) {
+      auto &state = capture_state();
+      std::lock_guard lock(state.mutex);
+      ID3D11Device *owner = nullptr;
+      texture->GetDevice(&owner);
+      const bool same_device = owner == state.device.get();
+      if (owner) {
+        owner->Release();
+      }
+      if (!state.device || !same_device) {
+        return false;
+      }
+      force_idr = force_idr || idr_requested.exchange(false);
+      const bool locked = mutex && mutex->AcquireSync(0, 100) == S_OK;
+      if (!encode(state.device.get(), state.ctx.get(), texture, state.staging, force_idr, out, idr)) {
+        out.clear();
         idr_requested = true;
       }
+      if (locked) {
+        mutex->ReleaseSync(0);
+      }
+      return true;  // an empty frame still belongs to this session; never switch encoders
     }
   }  // namespace koclient
 
@@ -1381,16 +1430,13 @@ namespace platf::dxgi {
     nvenc::nvenc_encoded_frame encode_frame(std::uint64_t frame_index, bool force_idr) override {
       nvenc::nvenc_encoded_frame frame;
       frame.frame_index = frame_index;
-      if (pending.empty()) {
-        // No captured frame yet (dummy/blank image): encode a black frame on our own device.
-        encode_blank(force_idr || !sent_idr, frame);
+      bool key = false;
+      // Frames without a new capture encode the same texture again; only before the capture
+      // device is known (encoder validation) is a black frame encoded on our own device.
+      if (texture && koclient::encode_texture(texture.get(), mutex.get(), force_idr || !sent_idr, frame.data, key)) {
+        frame.idr = key;
       } else {
-        frame.data = std::move(pending);
-        frame.idr = pending_idr;
-      }
-      pending.clear();
-      if (force_idr && !frame.idr) {
-        koclient::idr_requested = true;
+        encode_blank(force_idr || !sent_idr, frame);
       }
       sent_idr = sent_idr || frame.idr;
       return frame;
@@ -1401,12 +1447,15 @@ namespace platf::dxgi {
     }
 
     void set_frame(img_d3d_t &img) {
-      if (img.dummy || img.blank) {
-        pending.clear();
+      if (!img.capture_texture) {
         return;
       }
-      pending = img.koclient_bitstream;
-      pending_idr = img.koclient_idr;
+      img.capture_texture->AddRef();
+      texture.reset(img.capture_texture.get());
+      if (img.capture_mutex) {
+        img.capture_mutex->AddRef();
+      }
+      mutex.reset(img.capture_mutex.get());
     }
 
     adapter_t::pointer adapter = nullptr;
@@ -1444,8 +1493,8 @@ namespace platf::dxgi {
 
     int width = 0;
     int height = 0;
-    std::vector<uint8_t> pending;
-    bool pending_idr = false;
+    texture2d_t texture;
+    keyed_mutex_t mutex;
     bool sent_idr = false;
     device_t blank_device;
     device_ctx_t blank_ctx;
@@ -2129,11 +2178,11 @@ namespace platf::dxgi {
 
     auto d3d_img = std::static_pointer_cast<img_d3d_t>(img);
     d3d_img->blank = false;  // image is always ready for capture
+    koclient::note_capture_device(device.get(), device_ctx.get());
     if (complete_img(d3d_img.get(), false) == 0) {
       texture_lock_helper lock_helper(d3d_img->capture_mutex.get());
       if (lock_helper.lock()) {
         device_ctx->CopyResource(d3d_img->capture_texture.get(), src.get());
-        koclient::encode_captured(device.get(), device_ctx.get(), src.get(), *d3d_img);
       } else {
         BOOST_LOG(error) << "Failed to lock capture texture";
         return capture_e::error;
