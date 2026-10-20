@@ -754,6 +754,53 @@ namespace video {
     },
     PARALLEL_ENCODING | REF_FRAMES_INVALIDATION | YUV444_SUPPORT | ASYNC_TEARDOWN  // flags
   };
+
+  /**
+   * @brief koclient paravirtual encoder: H.264 encoded by the host GPU of a KVM guest
+   * (Yttrium/Venus virtio-gpu) through the guest display driver. Only tried when
+   * `encoder = koclient` is configured.
+   */
+  encoder_t koclient {
+    "koclient"sv,
+    std::make_unique<encoder_platform_formats_nvenc>(
+      platf::mem_type_e::dxgi,
+      platf::pix_fmt_e::nv12,
+      platf::pix_fmt_e::unknown,
+      platf::pix_fmt_e::unknown,
+      platf::pix_fmt_e::unknown
+    ),
+    {
+      {},  // Common options
+      {},  // SDR-specific options
+      {},  // HDR-specific options
+      {},  // YUV444 SDR-specific options
+      {},  // YUV444 HDR-specific options
+      {},  // Fallback options
+      ""s,  // AV1 is not supported
+      {},  // capabilities
+    },
+    {
+      {},  // Common options
+      {},  // SDR-specific options
+      {},  // HDR-specific options
+      {},  // YUV444 SDR-specific options
+      {},  // YUV444 HDR-specific options
+      {},  // Fallback options
+      ""s,  // HEVC is not supported
+      {},  // capabilities
+    },
+    {
+      {},  // Common options
+      {},  // SDR-specific options
+      {},  // HDR-specific options
+      {},  // YUV444 SDR-specific options
+      {},  // YUV444 HDR-specific options
+      {},  // Fallback options
+      "h264_koclient"s,
+      {},  // capabilities
+    },
+    0  // flags
+  };
 #elif !defined(__APPLE__)
   encoder_t nvenc {
     "nvenc"sv,
@@ -1454,6 +1501,7 @@ namespace video {
     &quicksync,
     &amdvce,
     &mediafoundation,
+    &koclient,
 #endif
 #if defined(__linux__) || defined(linux) || defined(__linux) || defined(__FreeBSD__)
   #ifdef SUNSHINE_BUILD_VULKAN
@@ -3281,6 +3329,12 @@ namespace video {
     }
 
     auto encoder_list = encoders;
+#ifdef _WIN32
+    // The koclient encoder only works inside a Yttrium/Venus KVM guest; never probe it unasked.
+    if (config::video.encoder != "koclient") {
+      std::erase(encoder_list, &koclient);
+    }
+#endif
 
     // If we already have a good encoder, check to see if another probe is required
     if (chosen_encoder && !(chosen_encoder->flags & ALWAYS_REPROBE) && !platf::needs_encoder_reenumeration()) {

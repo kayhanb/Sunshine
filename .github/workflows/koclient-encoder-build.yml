@@ -1,0 +1,24 @@
+---
+# koclient-encoder branch build: tray-less AMD64 Windows package as a CI artifact only.
+# No release is published, so nothing pinned to a trayless-* release changes.
+name: koclient encoder build
+
+on:
+  push:
+    branches:
+      - koclient-encoder
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci-windows.yml
+    secrets: inherit
+    with:
+      publish_release: "false"
+      release_commit: "f21d344cd4f6c54b95296374cbe692b410068a47"
+      release_version: "2026.922.203725"

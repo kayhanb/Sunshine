@@ -3,7 +3,10 @@
  * @brief Definitions for handling video ram.
  */
 // standard includes
+#include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <cstring>
 
 // platform includes
 #include <d3dcompiler.h>
@@ -174,12 +177,127 @@ namespace platf::dxgi {
     // DXGI format of this image texture
     DXGI_FORMAT format;  ///< DXGI format of the captured texture.
 
+    // koclient encoder: H.264 bitstream encoded at capture time (empty when inactive)
+    std::vector<uint8_t> koclient_bitstream;  ///< Encoded frame for the koclient encoder.
+    bool koclient_idr = false;  ///< Whether koclient_bitstream is an IDR frame.
+
     virtual ~img_d3d_t() override {
       if (encoder_texture_handle) {
         CloseHandle(encoder_texture_handle);
       }
     };
   };
+
+  /**
+   * @brief koclient paravirtual encoder shared state.
+   *
+   * Inside a Yttrium/Venus KVM guest the display driver encodes a frame on the host GPU when the
+   * frame is copied into a staging texture one row taller than the source (yttrium.ini
+   * KOCLIENT_ENCODE_PROCESS selects the process). The staging texture then holds a 32-byte
+   * header and the H.264 bitstream. Encoding happens on the capturing device so no cross-device
+   * synchronization is needed; the encode device only hands the bitstream to the stream.
+   */
+  namespace koclient {
+    struct header_t {
+      uint32_t magic;  // 'KOEN'
+      uint32_t version;
+      int32_t result;
+      uint32_t bytes;
+      uint32_t keyframe;
+      uint32_t width;
+      uint32_t height;
+      uint32_t frame;
+    };
+
+    std::atomic<bool> active {false};  ///< An encode session is using the koclient encoder.
+    std::atomic<bool> idr_requested {true};  ///< The next encoded frame must be an IDR frame.
+    std::atomic<uint32_t> bitrate_mbps {20};  ///< Target bitrate.
+
+    /**
+     * @brief Per-device staging texture used to trigger the encode.
+     */
+    struct encoder_staging_t {
+      ID3D11Device *owner = nullptr;
+      texture2d_t staging;
+      UINT width = 0;
+      UINT height = 0;
+      DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
+    };
+
+    /**
+     * @brief Encode @p src (on @p device) and return the bitstream.
+     *
+     * @return True when a bitstream was produced.
+     */
+    bool encode(ID3D11Device *device, ID3D11DeviceContext *ctx, ID3D11Texture2D *src, encoder_staging_t &st, bool force_idr, std::vector<uint8_t> &out, bool &idr) {
+      D3D11_TEXTURE2D_DESC desc;
+      src->GetDesc(&desc);
+      if (!st.staging || st.owner != device || st.width != desc.Width || st.height != desc.Height || st.format != desc.Format) {
+        st.staging.reset();
+        st.owner = device;
+        D3D11_TEXTURE2D_DESC sd {};
+        sd.Width = desc.Width;
+        sd.Height = desc.Height + 1;
+        sd.MipLevels = 1;
+        sd.ArraySize = 1;
+        sd.Format = desc.Format;
+        sd.SampleDesc.Count = 1;
+        sd.Usage = D3D11_USAGE_STAGING;
+        sd.CPUAccessFlags = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE;
+        if (FAILED(device->CreateTexture2D(&sd, nullptr, &st.staging))) {
+          BOOST_LOG(error) << "koclient: failed to create the encode staging texture";
+          return false;
+        }
+        st.width = desc.Width;
+        st.height = desc.Height;
+        st.format = desc.Format;
+      }
+
+      // DstX=1 requests an IDR frame, DstY carries the bitrate in Mbit/s.
+      D3D11_BOX box {0, 0, 0, desc.Width, desc.Height, 1};
+      const UINT mbps = std::clamp<UINT>(bitrate_mbps.load(), 1, desc.Height);
+      ctx->CopySubresourceRegion(st.staging.get(), 0, force_idr ? 1 : 0, mbps, 0, src, 0, &box);
+
+      D3D11_MAPPED_SUBRESOURCE mapped;
+      if (FAILED(ctx->Map(st.staging.get(), 0, D3D11_MAP_READ, 0, &mapped))) {
+        BOOST_LOG(error) << "koclient: failed to map the encode staging texture";
+        return false;
+      }
+      header_t hdr;
+      std::memcpy(&hdr, mapped.pData, sizeof(hdr));
+      const bool ok = hdr.magic == 0x4E454F4B && hdr.result == 0 && hdr.bytes > 0 &&
+                      hdr.bytes <= (UINT64) mapped.RowPitch * desc.Height;
+      if (ok) {
+        auto data = static_cast<const uint8_t *>(mapped.pData) + sizeof(hdr);
+        out.assign(data, data + hdr.bytes);
+        idr = hdr.keyframe != 0;
+      } else {
+        BOOST_LOG(error) << "koclient: encode failed (magic 0x"sv << util::hex(hdr.magic).to_string_view()
+                         << ", result "sv << hdr.result << ')';
+      }
+      ctx->Unmap(st.staging.get(), 0);
+      return ok;
+    }
+
+    /**
+     * @brief Encode a captured image on the capturing device (capture thread).
+     */
+    void encode_captured(ID3D11Device *device, ID3D11DeviceContext *ctx, ID3D11Texture2D *src, img_d3d_t &img) {
+      static encoder_staging_t staging;
+      img.koclient_bitstream.clear();
+      img.koclient_idr = false;
+      if (!active.load()) {
+        return;
+      }
+      const bool force_idr = idr_requested.exchange(false);
+      if (!encode(device, ctx, src, staging, force_idr, img.koclient_bitstream, img.koclient_idr)) {
+        img.koclient_bitstream.clear();
+        idr_requested = true;
+      } else if (force_idr && !img.koclient_idr) {
+        idr_requested = true;
+      }
+    }
+  }  // namespace koclient
 
   /**
    * @brief Keyed-mutex guard used while sharing a D3D texture.
@@ -1225,6 +1343,132 @@ namespace platf::dxgi {
   /**
    * @brief D3D11 encode device that exposes captured textures to NVENC.
    */
+  /**
+   * @brief koclient encoder: hands the bitstream encoded at capture time to the stream.
+   */
+  class koclient_encoder_t: public nvenc::nvenc_encoder {
+  public:
+    bool create_encoder(const nvenc::nvenc_config &, const ::video::config_t &client_config, const ::video::sunshine_colorspace_t &, platf::pix_fmt_e) override {
+      if (client_config.videoFormat != 0) {
+        BOOST_LOG(error) << "koclient: only H.264 is supported";
+        return false;
+      }
+      width = client_config.width;
+      height = client_config.height;
+      koclient::bitrate_mbps = std::max(1, client_config.bitrate / 1000);
+      koclient::idr_requested = true;
+      koclient::active = true;
+      BOOST_LOG(info) << "koclient: encoder ready "sv << width << 'x' << height << ' ' << client_config.bitrate << " kbit/s"sv;
+      return true;
+    }
+
+    void destroy_encoder() override {
+      koclient::active = false;
+    }
+
+    ~koclient_encoder_t() override {
+      destroy_encoder();
+    }
+
+    nvenc::nvenc_encoded_frame encode_frame(std::uint64_t frame_index, bool force_idr) override {
+      nvenc::nvenc_encoded_frame frame;
+      frame.frame_index = frame_index;
+      if (pending.empty()) {
+        // No captured frame yet (dummy/blank image): encode a black frame on our own device.
+        encode_blank(force_idr || !sent_idr, frame);
+      } else {
+        frame.data = std::move(pending);
+        frame.idr = pending_idr;
+      }
+      pending.clear();
+      if (force_idr && !frame.idr) {
+        koclient::idr_requested = true;
+      }
+      sent_idr = sent_idr || frame.idr;
+      return frame;
+    }
+
+    bool invalidate_ref_frames(std::uint64_t, std::uint64_t) override {
+      return false;  // the session falls back to requesting an IDR frame
+    }
+
+    void set_frame(img_d3d_t &img) {
+      if (img.dummy || img.blank) {
+        pending.clear();
+        return;
+      }
+      pending = img.koclient_bitstream;
+      pending_idr = img.koclient_idr;
+    }
+
+    adapter_t::pointer adapter = nullptr;
+
+  private:
+    void encode_blank(bool idr, nvenc::nvenc_encoded_frame &frame) {
+      if (!blank_device) {
+        if (FAILED(D3D11CreateDevice(adapter, adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_FLAGS, nullptr, 0, D3D11_SDK_VERSION, &blank_device, nullptr, &blank_ctx))) {
+          BOOST_LOG(error) << "koclient: failed to create the blank-frame device";
+          return;
+        }
+        D3D11_TEXTURE2D_DESC td {};
+        td.Width = width;
+        td.Height = height;
+        td.MipLevels = 1;
+        td.ArraySize = 1;
+        td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        td.SampleDesc.Count = 1;
+        td.Usage = D3D11_USAGE_DEFAULT;
+        td.BindFlags = D3D11_BIND_RENDER_TARGET;
+        if (FAILED(blank_device->CreateTexture2D(&td, nullptr, &blank_texture))) {
+          BOOST_LOG(error) << "koclient: failed to create the blank texture";
+          return;
+        }
+        render_target_t rtv;
+        if (SUCCEEDED(blank_device->CreateRenderTargetView(blank_texture.get(), nullptr, &rtv))) {
+          const float black[4] {0, 0, 0, 1};
+          blank_ctx->ClearRenderTargetView(rtv.get(), black);
+        }
+      }
+      bool key = false;
+      koclient::encode(blank_device.get(), blank_ctx.get(), blank_texture.get(), blank_staging, idr, frame.data, key);
+      frame.idr = key;
+    }
+
+    int width = 0;
+    int height = 0;
+    std::vector<uint8_t> pending;
+    bool pending_idr = false;
+    bool sent_idr = false;
+    device_t blank_device;
+    device_ctx_t blank_ctx;
+    texture2d_t blank_texture;
+    koclient::encoder_staging_t blank_staging;
+  };
+
+  /**
+   * @brief Encode device for the koclient encoder.
+   */
+  class d3d_koclient_encode_device_t: public nvenc_encode_device_t {
+  public:
+    bool init_device(adapter_t::pointer adapter_p) {
+      encoder.adapter = adapter_p;
+      nvenc = &encoder;
+      return true;
+    }
+
+    bool init_encoder(const ::video::config_t &client_config, const ::video::sunshine_colorspace_t &colorspace) override {
+      return encoder.create_encoder(config::video.nv, client_config, colorspace, platf::pix_fmt_e::nv12);
+    }
+
+    int convert(platf::img_t &img_base) override {
+      encoder.set_frame((img_d3d_t &) img_base);
+      return 0;
+    }
+
+  private:
+    koclient_encoder_t encoder;
+  };
+
   class d3d_nvenc_encode_device_t: public nvenc_encode_device_t {
   public:
     /**
@@ -1881,6 +2125,7 @@ namespace platf::dxgi {
       texture_lock_helper lock_helper(d3d_img->capture_mutex.get());
       if (lock_helper.lock()) {
         device_ctx->CopyResource(d3d_img->capture_texture.get(), src.get());
+        koclient::encode_captured(device.get(), device_ctx.get(), src.get(), *d3d_img);
       } else {
         BOOST_LOG(error) << "Failed to lock capture texture";
         return capture_e::error;
@@ -2207,6 +2452,11 @@ namespace platf::dxgi {
   }
 
   std::unique_ptr<nvenc_encode_device_t> display_vram_t::make_nvenc_encode_device(pix_fmt_e pix_fmt) {
+    if (config::video.encoder == "koclient") {
+      auto koclient_device = std::make_unique<d3d_koclient_encode_device_t>();
+      koclient_device->init_device(adapter.get());
+      return koclient_device;
+    }
     auto device = std::make_unique<d3d_nvenc_encode_device_t>();
     if (!device->init_device(shared_from_this(), adapter.get(), pix_fmt)) {
       return nullptr;
