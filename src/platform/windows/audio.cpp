@@ -575,6 +575,17 @@ namespace platf::audio {
       // Refill the sample buffer if needed
       while (sample_buf_pos - std::begin(sample_buf) < sample_size) {
         auto capture_result = _fill_buffer();
+        // A loopback capture opened while the sink's render path is being set up
+        // (the session just made it the default device and applications are still
+        // moving their streams onto it) can stay silent forever: the event is never
+        // signalled and no error is reported. Reopening it later works, which is
+        // what a second, overlapping session used to do by accident. Until the
+        // first buffer arrives, reopen the capture every couple of seconds.
+        if (capture_result == capture_e::timeout && !received_data &&
+            std::chrono::steady_clock::now() - opened_at > 2s) {
+          BOOST_LOG(info) << "No audio captured since the capture was opened, reopening it"sv;
+          return capture_e::reinit;
+        }
         if (capture_result == capture_e::timeout && continuous_audio) {
           // Write silence to sample_buf
           std::fill_n(sample_buf_pos, sample_size, 0.0f);
@@ -605,6 +616,8 @@ namespace platf::audio {
      * @return 0 on success; nonzero or negative platform status on failure.
      */
     int init(std::uint32_t sample_rate, std::uint32_t frame_size, std::uint32_t channels_out, bool continuous, device_t capture_device) {
+      opened_at = std::chrono::steady_clock::now();
+      received_data = false;
       audio_event.reset(CreateEventA(nullptr, FALSE, FALSE, nullptr));
       if (!audio_event) {
         BOOST_LOG(error) << "Couldn't create Event handle"sv;
@@ -815,6 +828,8 @@ namespace platf::audio {
           BOOST_LOG(warning) << "Audio capture buffer overflow";
         }
 
+        received_data = true;
+
         if (buffer_flags & AUDCLNT_BUFFERFLAGS_SILENT) {
           std::fill_n(sample_buf_pos, n, 0);
         } else {
@@ -854,6 +869,8 @@ namespace platf::audio {
     float *sample_buf_pos;  ///< Current write position in `sample_buf`.
     int channels;  ///< Number of channels in the capture format.
     bool continuous_audio;  ///< Whether audio packets continue during silence.
+    std::chrono::steady_clock::time_point opened_at {};  ///< When the capture was opened.
+    bool received_data = false;  ///< Whether any buffer arrived since the capture was opened.
     bool follows_default_device;  ///< Whether capture follows the default render device rather than an explicit sink.
 
     HANDLE mmcss_task_handle = nullptr;  ///< MMCSS task handle for the audio capture thread.
@@ -1545,6 +1562,7 @@ namespace platf::audio {
       mic.sample_buf_pos = std::begin(mic.sample_buf);
       mic.continuous_audio = false;
       mic.follows_default_device = follows_default_device;
+      mic.opened_at = std::chrono::steady_clock::now();
 
       if (install_callback) {
         mic.default_endpt_changed_cb = [&callback_count] {
@@ -1557,6 +1575,29 @@ namespace platf::audio {
         eConsole,
         nullptr
       );
+
+      std::vector<float> sample(1);
+      return mic.sample(sample);
+    }
+
+    /**
+     * @brief Run one sample() on a capture that has been open for `age` and either has
+     * or has not received a buffer yet, with no new data pending.
+     *
+     * @param age How long ago the capture was opened.
+     * @param received_data Whether a buffer already arrived.
+     * @return Capture result of the call.
+     */
+    capture_e simulate_silent_capture(std::chrono::milliseconds age, bool received_data) {
+      mic_wasapi_t mic;
+      mic.audio_event.reset(CreateEventA(nullptr, FALSE, FALSE, nullptr));
+      mic.default_latency_ms = 0;
+      mic.sample_buf = util::buffer_t<float> {1};
+      mic.sample_buf_pos = std::begin(mic.sample_buf);
+      mic.continuous_audio = false;
+      mic.follows_default_device = false;
+      mic.opened_at = std::chrono::steady_clock::now() - age;
+      mic.received_data = received_data;
 
       std::vector<float> sample(1);
       return mic.sample(sample);

@@ -4,6 +4,7 @@
  */
 
 // test includes
+#include <chrono>
 #include "../../../tests_common.h"
 
 #ifdef _WIN32
@@ -22,6 +23,7 @@ namespace platf::audio::tests {
   bool microphone_available(const std::string &assigned_sink, const std::string &configured_sink, IMMDeviceEnumerator *device_enum);
   bool capture_follows_default_device(IMMDeviceEnumerator *device_enum, IMMDevice *capture_device);
   capture_e simulate_default_device_change(bool follows_default_device, bool install_callback, bool render_device_changed, int &callback_count);
+  capture_e simulate_silent_capture(std::chrono::milliseconds age, bool received_data);
 }  // namespace platf::audio::tests
 
 namespace {
@@ -368,3 +370,18 @@ TEST(WindowsAudioTest, DefaultChangeWithoutCallbackStillReinitializes) {
   EXPECT_EQ(callback_count, 0);
 }
 #endif
+
+TEST(WindowsAudioTest, CaptureThatNeverReceivedDataIsReopened) {
+  using namespace std::chrono_literals;
+  EXPECT_EQ(platf::audio::tests::simulate_silent_capture(3s, false), platf::capture_e::reinit);
+}
+
+TEST(WindowsAudioTest, FreshCaptureWaitsBeforeReopening) {
+  using namespace std::chrono_literals;
+  EXPECT_EQ(platf::audio::tests::simulate_silent_capture(100ms, false), platf::capture_e::timeout);
+}
+
+TEST(WindowsAudioTest, SilenceAfterDataIsNotReopened) {
+  using namespace std::chrono_literals;
+  EXPECT_EQ(platf::audio::tests::simulate_silent_capture(10s, true), platf::capture_e::timeout);
+}
