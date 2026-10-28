@@ -5,6 +5,7 @@
 #define INITGUID
 
 // standard includes
+#include <cstring>
 #include <format>
 #include <utility>
 
@@ -1069,6 +1070,29 @@ namespace platf::audio {
 
       auto &device_id = virtual_sink_info->first;
       auto &waveformats = virtual_sink_info->second.get().virtual_sink_waveformats;
+
+      // Current engine format of the virtual sink, if it can be read.
+      auto current_format = [&]() -> std::optional<WAVEFORMATEXTENSIBLE> {
+        device_t device;
+        audio::prop_t prop;
+        prop_var_t value;
+        if (FAILED(device_enum->GetDevice(device_id.c_str(), &device)) ||
+            FAILED(device->OpenPropertyStore(STGM_READ, &prop)) ||
+            FAILED(prop->GetValue(PKEY_AudioEngine_DeviceFormat, &value.prop)) ||
+            value.prop.vt != VT_BLOB || value.prop.blob.cbSize < sizeof(WAVEFORMATEX)) {
+          return std::nullopt;
+        }
+        WAVEFORMATEXTENSIBLE format {};
+        std::memcpy(&format, value.prop.blob.pBlobData, std::min<std::size_t>(value.prop.blob.cbSize, sizeof(format)));
+        return format;
+      };
+      auto same_format = [](const WAVEFORMATEXTENSIBLE &a, const WAVEFORMATEXTENSIBLE &b) {
+        return a.Format.nChannels == b.Format.nChannels &&
+               a.Format.nSamplesPerSec == b.Format.nSamplesPerSec &&
+               a.Format.wBitsPerSample == b.Format.wBitsPerSample &&
+               a.Samples.wValidBitsPerSample == b.Samples.wValidBitsPerSample;
+      };
+
       for (const auto &waveformat : waveformats) {
         // We're using completely undocumented and unlisted API,
         // better not pass objects without copying them first.
@@ -1080,9 +1104,29 @@ namespace platf::audio {
           continue;
         }
 
+        // Changing the device format restarts the endpoint. A loopback capture opened
+        // right after that (tens of milliseconds later) binds to the endpoint that is
+        // going away: it never signals data and never reports an error, so the whole
+        // session stays silent. Seen with a virtual sink on Windows 11: the first
+        // session of every connection had no audio, a second session that reused the
+        // already configured sink did. Skip the change when the format already
+        // matches, and let the endpoint settle when it really changes.
+        if (auto current = current_format(); current && same_format(*current, waveformat)) {
+          BOOST_LOG(info) << "Virtual audio sink format already " << logging::bracket(waveformat_to_pretty_string(waveformat));
+          return device_id;
+        }
+
         WAVEFORMATEXTENSIBLE p {};
         if (SUCCEEDED(policy->SetDeviceFormat(device_id_copy.c_str(), waveformat_copy_pointer, (WAVEFORMATEX *) &p))) {
           BOOST_LOG(info) << "Changed virtual audio sink format to " << logging::bracket(waveformat_to_pretty_string(waveformat));
+          for (int i = 0; i < 40; ++i) {
+            if (auto current = current_format(); current && same_format(*current, waveformat)) {
+              break;
+            }
+            Sleep(50);
+          }
+          // The property store updates before the engine finishes restarting.
+          Sleep(500);
           return device_id;
         }
       }
