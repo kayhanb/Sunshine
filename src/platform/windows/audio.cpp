@@ -787,7 +787,21 @@ namespace platf::audio {
         case WAIT_OBJECT_0:
           break;
         case WAIT_TIMEOUT:
-          return capture_e::timeout;
+          {
+            // A loopback capture on a virtual sink can hold packets without ever
+            // signalling its event: the engine runs and the session shows the
+            // application's level, yet the wait times out forever and the stream
+            // carries no audio at all. Look at the buffer before giving up.
+            std::uint32_t pending {};
+            if (!audio_capture || FAILED(audio_capture->GetNextPacketSize(&pending)) || pending == 0) {
+              return capture_e::timeout;
+            }
+            if (!polled_without_event) {
+              polled_without_event = true;
+              BOOST_LOG(info) << "Audio capture holds data its event did not signal, polling the buffer"sv;
+            }
+            break;
+          }
         default:
           BOOST_LOG(error) << "Couldn't wait for audio event: [0x"sv << util::hex(status).to_string_view() << ']';
           return capture_e::error;
@@ -871,6 +885,7 @@ namespace platf::audio {
     bool continuous_audio;  ///< Whether audio packets continue during silence.
     std::chrono::steady_clock::time_point opened_at {};  ///< When the capture was opened.
     bool received_data = false;  ///< Whether any buffer arrived since the capture was opened.
+    bool polled_without_event = false;  ///< Whether data was already found without the event (logged once).
     bool follows_default_device;  ///< Whether capture follows the default render device rather than an explicit sink.
 
     HANDLE mmcss_task_handle = nullptr;  ///< MMCSS task handle for the audio capture thread.

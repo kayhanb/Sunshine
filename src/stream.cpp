@@ -521,6 +521,8 @@ namespace stream {
     struct {
       crypto::cipher::cbc_t cipher;  ///< AES-CBC cipher used for audio-packet encryption.
       std::string ping_payload;  ///< Payload expected from audio-channel ping packets.
+      bool first_packet_logged = false;  ///< Whether the session's first audio packet was logged.
+      bool send_failure_logged = false;  ///< Whether a failed audio send was already logged.
 
       std::uint16_t sequenceNumber;  ///< Next RTP sequence number for an audio packet.
       // avRiKeyId == util::endian::big(First (sizeof(avRiKeyId)) bytes of launch_session->iv)
@@ -1938,7 +1940,18 @@ namespace stream {
           session->audio.peer.port(),
           session->localAddress,
         };
-        platf::send(send_info);
+        const bool sent = platf::send(send_info);
+        // One line per session: the stream either carries audio from here on or
+        // the send itself is failing (both were invisible before).
+        if (!session->audio.first_packet_logged) {
+          session->audio.first_packet_logged = true;
+          BOOST_LOG(info) << "First audio packet "sv << (sent ? "sent to "sv : "FAILED to send to "sv)
+                          << peer_address << ':' << session->audio.peer.port();
+        } else if (!sent && !session->audio.send_failure_logged) {
+          session->audio.send_failure_logged = true;
+          BOOST_LOG(warning) << "Audio packet send failed [seq "sv << sequenceNumber << "] to "sv
+                             << peer_address << ':' << session->audio.peer.port();
+        }
 
         auto &fec_packet = session->audio.fec_packet;
         // initialize the FEC header at the beginning of the FEC block
