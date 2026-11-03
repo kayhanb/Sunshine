@@ -70,6 +70,14 @@ namespace nvenc {
      * @return `true` on success, `false` on error.
      */
     virtual bool invalidate_ref_frames(std::uint64_t first_frame, std::uint64_t last_frame) = 0;
+
+    /**
+     * @brief Change the bitrate of the running encoder without an IDR frame.
+     *
+     * @param kbps New video bitrate in kilobits per second.
+     * @return `true` on success, `false` on error (the old bitrate stays).
+     */
+    virtual bool set_bitrate(int kbps) = 0;
   };
 
 }  // namespace nvenc

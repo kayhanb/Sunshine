@@ -4,6 +4,7 @@
  */
 
 // standard includes
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <future>
@@ -513,6 +514,7 @@ namespace stream {
       std::uint64_t gcm_iv_counter;  ///< Counter incorporated into video AES-GCM initialization vectors.
 
       safe::mail_raw_t::event_t<bool> idr_events;  ///< Event requesting an instantaneous decoder refresh frame.
+      safe::mail_raw_t::event_t<int> bitrate_events;  ///< Event carrying a new encoder bitrate in kbps.
       safe::mail_raw_t::event_t<std::pair<int64_t, int64_t>> invalidate_ref_frames_events;  ///< Event carrying the reference-frame range to invalidate.
 
       std::unique_ptr<platf::deinit_t> qos;  ///< Lifetime guard for video-socket QoS configuration.
@@ -556,6 +558,7 @@ namespace stream {
     std::uint64_t input_permission_generation = 0;  ///< Generation at which input_permission was last read.
     bool input_permission = true;  ///< Cached per-client input permission; refreshed when the generation moves.
     std::string input_session_id;  ///< Stable client identity used to retain input devices across resume.
+    std::string client_name;  ///< Name the client paired with (adaptive bitrate addresses sessions by it).
 
     safe::mail_raw_t::event_t<bool> shutdown_event;  ///< Event raised when the stream should shut down.
     safe::signal_t controlEnd;  ///< Signal raised when the control channel exits.
@@ -2204,6 +2207,35 @@ namespace stream {
   }
 
   namespace session {
+    /**
+     * @brief Running sessions that accept a bitrate change.
+     *
+     * Kept apart from the control server's list so the web UI can reach a session without
+     * holding a broadcast reference, which would start the broadcast threads.
+     */
+    static sync_util::sync_t<std::vector<session_t *>> bitrate_sessions;
+
+    /**
+     * @brief Lowest bitrate a session can be lowered to.
+     */
+    constexpr int MIN_ADAPTIVE_BITRATE_KBPS = 500;
+
+    int set_bitrate(std::string_view client_name, int kbps) {
+      int applied = 0;
+      auto lg = bitrate_sessions.lock();
+      for (auto *session : *bitrate_sessions) {
+        if (session->client_name != client_name || session->state.load(std::memory_order_relaxed) != state_e::RUNNING) {
+          continue;
+        }
+        // The bitrate negotiated at launch is the ceiling: max_client_bitrate and the FEC,
+        // audio and overhead shares were already applied to it.
+        const int ceiling = std::max(MIN_ADAPTIVE_BITRATE_KBPS, session->config.monitor.bitrate);
+        applied = std::clamp(kbps, MIN_ADAPTIVE_BITRATE_KBPS, ceiling);
+        session->video.bitrate_events->raise(applied);
+      }
+      return applied;
+    }
+
     std::atomic_uint running_sessions;  ///< Running sessions.
 
     /**
@@ -2225,6 +2257,10 @@ namespace stream {
      */
     void stop(session_t &session) {
       while_starting_do_nothing(session.state);
+      {
+        auto lg = bitrate_sessions.lock();
+        std::erase(*bitrate_sessions, &session);
+      }
       auto expected = state_e::RUNNING;
       auto already_stopping = !session.state.compare_exchange_strong(expected, state_e::STOPPING);
       if (already_stopping) {
@@ -2318,6 +2354,10 @@ namespace stream {
       session.videoThread = std::jthread {videoThread, &session};
 
       session.state.store(state_e::RUNNING, std::memory_order_relaxed);
+      {
+        auto lg = bitrate_sessions.lock();
+        bitrate_sessions->push_back(&session);
+      }
 
       // If this is the first session, invoke the platform callbacks
       if (++running_sessions == 1) {
@@ -2355,6 +2395,8 @@ namespace stream {
       };
 
       session->video.idr_events = mail->event<bool>(mail::idr);
+      session->video.bitrate_events = mail->event<int>(mail::bitrate);
+      session->client_name = launch_session.client_name;
       session->video.invalidate_ref_frames_events = mail->event<std::pair<int64_t, int64_t>>(mail::invalidate_ref_frames);
       session->video.lowseq = 0;
       session->video.ping_payload = launch_session.av_ping_payload;

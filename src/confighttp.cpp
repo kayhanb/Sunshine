@@ -47,6 +47,7 @@
 #include "logging.h"
 #include "network.h"
 #include "nvhttp.h"
+#include "stream.h"
 #include "platform/common.h"
 #include "process.h"
 #include "rtsp.h"
@@ -1880,6 +1881,57 @@ namespace confighttp {
   }
 
   /**
+   * @brief Change the encoder bitrate of a client's running stream.
+   *
+   * The client measures the network during the stream and asks for a lower or higher bitrate.
+   * The value is clamped to the bitrate the session negotiated at launch, so it never exceeds
+   * max_client_bitrate. Encoders that cannot change it in place keep the old bitrate.
+   *
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   *
+   * @api_examples{/api/session/bitrate|:| POST|:| {"name":"My PC","kbps":12000}}
+   */
+  void setSessionBitrate(const resp_https_t &response, const req_https_t &request) {
+    if (!check_content_type(response, request, "application/json")) {
+      return;
+    }
+    if (!authenticate(response, request)) {
+      return;
+    }
+
+    std::string client_id = get_client_id(request);
+    if (!validate_csrf_token(response, request, client_id)) {
+      return;
+    }
+
+    std::stringstream ss;
+    ss << request->content.rdbuf();
+    try {
+      nlohmann::json input_tree = nlohmann::json::parse(ss);
+      const std::string name = input_tree.value("name", "");
+      const int kbps = input_tree.value("kbps", 0);
+      if (!nvhttp::is_valid_pairing_name(name)) {
+        bad_request(response, request, "Client name must contain between 1 and 128 bytes");
+        return;
+      }
+      if (kbps <= 0) {
+        bad_request(response, request, "kbps must be a positive number");
+        return;
+      }
+
+      const int applied = stream::session::set_bitrate(name, kbps);
+      nlohmann::json output_tree;
+      output_tree["status"] = applied > 0;
+      output_tree["kbps"] = applied;
+      send_response(response, output_tree);
+    } catch (std::exception &e) {
+      BOOST_LOG(warning) << "SetSessionBitrate: "sv << e.what();
+      bad_request(response, request, e.what());
+    }
+  }
+
+  /**
    * @brief Reset the display device persistence.
    * @param response The HTTP response object.
    * @param request The HTTP request object.
@@ -2372,6 +2424,7 @@ namespace confighttp {
     server.resource["^/api/pin$"]["DELETE"] = cancelPairing;
     server.resource["^/api/pin$"]["GET"] = getPendingPairings;
     server.resource["^/api/pin$"]["POST"] = savePin;
+    server.resource["^/api/session/bitrate$"]["POST"] = setSessionBitrate;
     server.resource["^/api/logs$"]["GET"] = getLogs;
     server.resource["^/api/reset-display-device-persistence$"]["POST"] = resetDisplayDevicePersistence;
     server.resource["^/api/reset-portal-token$"]["POST"] = resetPortalToken;

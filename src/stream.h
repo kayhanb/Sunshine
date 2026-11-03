@@ -5,6 +5,7 @@
 #pragma once
 
 // standard includes
+#include <string_view>
 #include <utility>
 
 // lib includes
@@ -94,5 +95,16 @@ namespace stream {
      * @return PEM certificate associated with the session's client.
      */
     const std::string &client_cert(session_t &session);
+
+    /**
+     * @brief Change the encoder bitrate of the running sessions of a client.
+     *
+     * The value is clamped between 500 kbps and the bitrate the session negotiated at launch.
+     *
+     * @param client_name Name the client paired with.
+     * @param kbps Requested video bitrate in kilobits per second.
+     * @return Applied bitrate, 0 when the client has no running session.
+     */
+    int set_bitrate(std::string_view client_name, int kbps);
   }  // namespace session
 }  // namespace stream
