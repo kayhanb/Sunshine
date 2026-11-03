@@ -59,6 +59,10 @@ namespace {
       return true;
     }
 
+    bool set_bitrate(int) override {
+      return true;
+    }
+
     ID3D11Texture2D *get_input_texture() override {
       return nullptr;
     }

@@ -672,6 +672,13 @@ namespace NVENC_NAMESPACE {
                      << frame_size_format % (client_config.bitrate / 8. / client_config.framerate) << " kB";
     log_created_encoder(init_params, enc_config, config, client_config, buffer_format);
 
+    reconfigure.init_params = init_params;
+    reconfigure.enc_config = enc_config;
+    reconfigure.init_params.encodeConfig = &reconfigure.enc_config;
+    reconfigure.framerate = std::max(1, client_config.framerate);
+    reconfigure.vbv_percentage_increase = config.vbv_percentage_increase;
+    reconfigure.custom_vbv = enc_config.rcParams.vbvBufferSize != 0;
+
     encoder_state = {};
     fail_guard.disable();
     return true;
@@ -790,6 +797,35 @@ namespace NVENC_NAMESPACE {
     encoder_state.frame_size_logger.collect_and_log(encoded_frame.data.size() / 1000.);
 
     return encoded_frame;
+  }
+
+  bool nvenc_base::set_bitrate(int kbps) {
+    if (!encoder || kbps <= 0 || reconfigure.init_params.encodeConfig == nullptr) {
+      return false;
+    }
+
+    // Same rate-control fields as configure_rate_control(), from the new bitrate.
+    NV_ENC_CONFIG enc_config = reconfigure.enc_config;
+    enc_config.rcParams.averageBitRate = static_cast<std::uint32_t>(kbps) * 1000;
+    if (reconfigure.custom_vbv) {
+      enc_config.rcParams.vbvBufferSize = enc_config.rcParams.averageBitRate / reconfigure.framerate;
+      if (reconfigure.vbv_percentage_increase > 0) {
+        enc_config.rcParams.vbvBufferSize += enc_config.rcParams.vbvBufferSize * reconfigure.vbv_percentage_increase / 100;
+      }
+    }
+
+    NV_ENC_RECONFIGURE_PARAMS params = {.version = NV_ENC_RECONFIGURE_PARAMS_VER};
+    params.reInitEncodeParams = reconfigure.init_params;
+    params.reInitEncodeParams.encodeConfig = &enc_config;
+    params.resetEncoder = 0;
+    params.forceIDR = 0;
+    if (nvenc_failed(nvenc->nvEncReconfigureEncoder(encoder, &params))) {
+      BOOST_LOG(error) << "NvEnc: NvEncReconfigureEncoder() failed: " << last_nvenc_error_string;
+      return false;
+    }
+
+    reconfigure.enc_config = enc_config;
+    return true;
   }
 
   bool nvenc_base::invalidate_ref_frames(uint64_t first_frame, uint64_t last_frame) {

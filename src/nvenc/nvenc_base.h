@@ -75,6 +75,13 @@ namespace NVENC_NAMESPACE {
      */
     bool invalidate_ref_frames(uint64_t first_frame, uint64_t last_frame) override;
 
+    /**
+     * @brief Change the bitrate in place with `nvEncReconfigureEncoder()` (no reset, no IDR).
+     * @param kbps New video bitrate in kilobits per second.
+     * @return `true` on success, `false` on error.
+     */
+    bool set_bitrate(int kbps) override;
+
   protected:
     /**
      * @brief Required. Used for loading NvEnc library and setting `nvenc` variable with `NvEncodeAPICreateInstance()`.
@@ -329,6 +336,17 @@ namespace NVENC_NAMESPACE {
     ) const;
 
     NV_ENC_OUTPUT_PTR output_bitstream = nullptr;
+
+    /**
+     * @brief Parameters the encoder was initialized with, kept for `set_bitrate()`.
+     */
+    struct {
+      NV_ENC_INITIALIZE_PARAMS init_params = {};
+      NV_ENC_CONFIG enc_config = {};
+      std::uint32_t framerate = 0;
+      int vbv_percentage_increase = 0;
+      bool custom_vbv = false;
+    } reconfigure;
 
     struct {
       uint64_t last_encoded_frame_index = 0;

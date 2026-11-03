@@ -528,6 +528,35 @@ namespace video {
       request_idr_frame();
     }
 
+    /**
+     * @brief Change the rate-control fields between frames.
+     *
+     * FFmpeg's libx264 wrapper compares bit_rate, rc_max_rate and rc_buffer_size with its
+     * parameters before every frame and calls x264_encoder_reconfig() when they differ.
+     * Every field set at creation is scaled by the same factor.
+     *
+     * @param kbps New video bitrate in kilobits per second.
+     * @return True when the fields were changed.
+     */
+    bool set_bitrate(int kbps) override {
+      auto ctx = avcodec_ctx.get();
+      if (!ctx || ctx->rc_max_rate <= 0 || kbps <= 0) {
+        return false;
+      }
+      const std::int64_t old_rate = ctx->rc_max_rate;
+      const std::int64_t new_rate = (std::int64_t) kbps * 1000;
+      const bool vbr_offset = ctx->bit_rate == old_rate - 1;
+      ctx->rc_max_rate = new_rate;
+      ctx->bit_rate = vbr_offset ? new_rate - 1 : new_rate;
+      if (ctx->rc_min_rate > 0) {
+        ctx->rc_min_rate = new_rate;
+      }
+      if (ctx->rc_buffer_size > 0) {
+        ctx->rc_buffer_size = (int) std::max<std::int64_t>(1, ctx->rc_buffer_size * new_rate / old_rate);
+      }
+      return true;
+    }
+
     avcodec_ctx_t avcodec_ctx;  ///< FFmpeg codec context owned by the encode session.
     std::unique_ptr<platf::avcodec_encode_device_t> device;  ///< Platform device used by the FFmpeg hardware encoder.
 
@@ -598,6 +627,19 @@ namespace video {
     }
 
     /**
+     * @brief Change the NVENC bitrate in place (nvEncReconfigureEncoder, no IDR frame).
+     *
+     * @param kbps New video bitrate in kilobits per second.
+     * @return True when NVENC accepted the new bitrate.
+     */
+    bool set_bitrate(int kbps) override {
+      if (!device || !device->nvenc) {
+        return false;
+      }
+      return device->nvenc->set_bitrate(kbps);
+    }
+
+    /**
      * @brief Submit the next frame to NVENC and return the encoded payload.
      *
      * @param frame_index Monotonic frame index assigned by the video pipeline.
@@ -628,6 +670,7 @@ namespace video {
     safe::mail_raw_t::event_t<bool> idr_events;  ///< Event raised when an IDR frame is requested.
     safe::mail_raw_t::event_t<hdr_info_t> hdr_events;  ///< Event carrying updated HDR metadata.
     safe::mail_raw_t::event_t<input::touch_port_t> touch_port_events;  ///< Event carrying updated touch viewport metadata.
+    safe::mail_raw_t::event_t<int> bitrate_events;  ///< Event carrying a new video bitrate in kbps.
 
     config_t config;  ///< Stream or encoder configuration captured for the worker.
     int frame_nr;  ///< Next capture-frame number assigned to encoded packets.
@@ -1937,6 +1980,22 @@ namespace video {
    * @param frame_timestamp Frame timestamp.
    * @return 0 when the frame is encoded and queued; nonzero on encoder failure.
    */
+  /**
+   * @brief Apply a bitrate change requested during the stream.
+   *
+   * Called on the encoding thread between two frames.
+   *
+   * @param session Encode session of the stream.
+   * @param kbps New video bitrate in kilobits per second.
+   */
+  void apply_bitrate(encode_session_t &session, int kbps) {
+    if (session.set_bitrate(kbps)) {
+      BOOST_LOG(debug) << "Video bitrate changed to "sv << kbps << " Kbps"sv;
+    } else {
+      BOOST_LOG(warning) << "Encoder cannot change the bitrate during the stream, "sv << kbps << " Kbps ignored"sv;
+    }
+  }
+
   int encode(int64_t frame_nr, encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
     if (auto avcodec_session = dynamic_cast<avcodec_encode_session_t *>(&session)) {
       return encode_avcodec(frame_nr, *avcodec_session, packets, channel_data, frame_timestamp);
@@ -2439,6 +2498,7 @@ namespace video {
     auto packets = mail::man->queue<packet_t>(mail::video_packets);
     auto idr_events = mail->event<bool>(mail::idr);
     auto invalidate_ref_frames_events = mail->event<std::pair<int64_t, int64_t>>(mail::invalidate_ref_frames);
+    auto bitrate_events = mail->event<int>(mail::bitrate);
 
     {
       // Load a dummy image into the AVFrame to ensure we have something to encode
@@ -2463,6 +2523,12 @@ namespace video {
       if (idr_events->peek()) {
         requested_idr_frame = true;
         idr_events->pop();
+      }
+
+      if (bitrate_events->peek()) {
+        if (auto kbps = bitrate_events->pop()) {
+          apply_bitrate(*session, *kbps);
+        }
       }
 
       if (requested_idr_frame) {
@@ -2781,6 +2847,12 @@ namespace video {
             ctx->idr_events->pop();
           }
 
+          if (ctx->bitrate_events->peek()) {
+            if (auto kbps = ctx->bitrate_events->pop()) {
+              apply_bitrate(*pos->session, *kbps);
+            }
+          }
+
           if (frame_captured && pos->session->convert(*img)) {
             BOOST_LOG(error) << "Could not convert image"sv;
             ctx->shutdown_event->raise(true);
@@ -2985,6 +3057,7 @@ namespace video {
         std::move(idr_events),
         mail->event<hdr_info_t>(mail::hdr),
         mail->event<input::touch_port_t>(mail::touch_port),
+        mail->event<int>(mail::bitrate),
         config,
         1,
         channel_data,

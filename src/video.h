@@ -449,6 +449,19 @@ namespace video {
      * @param last_frame Last frame.
      */
     virtual void invalidate_ref_frames(int64_t first_frame, int64_t last_frame) = 0;
+
+    /**
+     * @brief Change the bitrate of the running encoder without a new session or an IDR frame.
+     *
+     * Adaptive bitrate: the client measures the network and lowers or raises the
+     * bitrate during the stream. Encoders that cannot change it in place keep the old bitrate.
+     *
+     * @param kbps New video bitrate in kilobits per second.
+     * @return True when the encoder accepted the new bitrate.
+     */
+    virtual bool set_bitrate(int kbps) {
+      return false;
+    }
   };
 
   // encoders
